@@ -4,7 +4,7 @@ import firebase_admin
 from firebase_admin import credentials
 import os
 from dotenv import load_dotenv
-from api import auth
+from api import auth, users
 
 # 환경 변수 로드 
 load_dotenv()
@@ -32,3 +32,4 @@ app.add_middleware(
 
 # 라우터 등록
 app.include_router(auth.router)
+app.include_router(users.router)
