@@ -12,6 +12,7 @@ router = APIRouter(prefix="/auth")
 # 회원가입 요청 모델
 class RegisterRequest(BaseModel):
     email: str
+    nickname: str
     gender: str
     birthdate: str  # "YYYY-MM-DD" 형식으로 전달
 
@@ -34,6 +35,7 @@ async def register_user(
     user = User(
         firebase_uid=uid,
         email=data.email,
+        nickname=data.nickname,
         gender=data.gender,
         birthdate=birthdate_dt
     )
@@ -41,7 +43,7 @@ async def register_user(
     db.commit()
     db.refresh(user)
 
-    return {"message": "회원가입 성공", "firebase_uid": user.firebase_uid}
+    return {"message": "회원가입 성공", "uid": uid}
 
 
 # 로그인 API
