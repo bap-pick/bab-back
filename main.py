@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 import firebase_admin
 from firebase_admin import credentials
 import os
@@ -33,3 +35,7 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(auth.router)
 app.include_router(users.router)
+
+os.makedirs("static/profile_images", exist_ok=True)
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
