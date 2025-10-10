@@ -37,3 +37,10 @@ htmlcov/
 *.iml
 
 mykey.json
+static/profile_images/*
+!static/profile_images/.gitkeep
+
+__pycache__/
+*.pyc
+
+.ipynb_checkpoints/

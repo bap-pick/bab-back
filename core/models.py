@@ -18,3 +18,4 @@ class User(Base):
     birth_date = Column(Date, nullable=False)
     birth_time = Column(Time, nullable=True)
     birth_calendar = Column(String(20), nullable=False, default="solar")
+    profile_image = Column(String(255), nullable=True)
