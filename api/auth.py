@@ -14,7 +14,11 @@ class RegisterRequest(BaseModel):
     email: str
     nickname: str
     gender: str
-    birthdate: str  # "YYYY-MM-DD" 형식으로 전달
+    birthCalendar: str
+    birthDate: str
+    birthHour: str
+    birthMinute: str
+    timeUnknown: bool
 
 # 회원가입 API
 @router.post("/register")
@@ -28,17 +32,33 @@ async def register_user(
     if existing_user:
         raise HTTPException(status_code=400, detail="이미 가입된 사용자입니다.")
 
-    # birthdate 문자열 -> datetime 객체 변환
-    birthdate_dt = datetime.datetime.strptime(data.birthdate, "%Y-%m-%d")
+    # birthdate 처리: 문자열 -> date 객체 변환
+    birth_date = datetime.datetime.strptime(data.birthDate, "%Y-%m-%d").date()
     
-    # DB에 사용자 추가
+    # birthHour / birthMinute 처리
+    if data.timeUnknown:
+        birth_time = None
+    else:
+        try:
+            hour = int(data.birthHour)
+            minute = int(data.birthMinute)
+            if not (0 <= hour < 24) or not (0 <= minute < 60):
+                raise ValueError
+            birth_time = datetime.time(hour=hour, minute=minute)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="출생시간이 올바르지 않습니다.")
+
+    # User 객체 생성
     user = User(
         firebase_uid=uid,
         email=data.email,
         nickname=data.nickname,
         gender=data.gender,
-        birthdate=birthdate_dt
+        birth_date=birth_date,
+        birth_time=birth_time,
+        birth_calendar=data.birthCalendar
     )
+    
     db.add(user)
     db.commit()
     db.refresh(user)
