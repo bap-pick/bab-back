@@ -23,8 +23,10 @@ def get_my_info(
     user_dict = {
         "email": user.email,
         "nickname": user.nickname,
-        "birthdate": user.birthdate,
         "gender": user.gender,
+        "birthDate": user.birth_date,
+        "birthTime": user.birth_time,
+        "birthCalendar": user.birth_calendar
     }
 
     if fields:
