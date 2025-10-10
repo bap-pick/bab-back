@@ -27,7 +27,8 @@ def get_my_info(
         "gender": user.gender,
         "birthDate": user.birth_date,
         "birthTime": user.birth_time,
-        "birthCalendar": user.birth_calendar
+        "birthCalendar": user.birth_calendar,
+        "profileImage": user.profile_image
     }
 
     if fields:
