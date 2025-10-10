@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Depends, UploadFile, File, Form
 from sqlalchemy.orm import Session
+import os, shutil
 
 from core.firebase_auth import verify_firebase_token # Firebase ID 토큰 검증
 from core.db import get_db # DB 세션 의존성
@@ -35,3 +36,42 @@ def get_my_info(
         return filtered_user
 
     return user_dict
+
+# PATCH: 내 정보 수정
+@router.patch("/me")
+async def patch_my_info(
+    uid: str = Depends(verify_firebase_token),
+    db: Session = Depends(get_db),
+    nickname: str = Form(None),
+    profile_image: UploadFile = File(None)
+):
+    # DB에서 사용자 조회
+    user = db.query(User).filter(User.firebase_uid == uid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
+
+    # 닉네임 수정
+    if nickname:
+        user.nickname = nickname
+
+    # 프로필 이미지 수정
+    if profile_image:
+        save_dir = "static/profile_images"
+        os.makedirs(save_dir, exist_ok=True)
+        file_path = os.path.join(save_dir, f"{uid}_{profile_image.filename}")
+
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(profile_image.file, buffer)
+
+        # 웹에서 접근 가능한 URL 형태로 DB 저장
+        user.profile_image = f"http://127.0.0.1:8000/{file_path.replace(os.sep, '/')}"
+
+
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "message": "회원 정보 수정 성공",
+        "nickname": user.nickname,
+        "profile_image": user.profile_image  # URL 반환
+    }
