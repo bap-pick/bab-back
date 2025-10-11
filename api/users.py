@@ -20,7 +20,6 @@ def get_my_info(
     if not user:
         raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
 
-    # 필요한 필드만 선택
     user_dict = {
         "email": user.email,
         "nickname": user.nickname,
@@ -28,7 +27,12 @@ def get_my_info(
         "birthDate": user.birth_date,
         "birthTime": user.birth_time,
         "birthCalendar": user.birth_calendar,
-        "profileImage": user.profile_image
+        "profileImage": user.profile_image,
+        "ohengWood": user.oheng_wood,
+        "ohengFire": user.oheng_fire,
+        "ohengEarth": user.oheng_earth,
+        "ohengMetal": user.oheng_metal,
+        "ohengWater": user.oheng_water,
     }
 
     if fields:
@@ -66,7 +70,6 @@ async def patch_my_info(
 
         # 웹에서 접근 가능한 URL 형태로 DB 저장
         user.profile_image = f"http://127.0.0.1:8000/{file_path.replace(os.sep, '/')}"
-
 
     db.commit()
     db.refresh(user)
