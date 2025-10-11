@@ -21,13 +21,24 @@ def _get_manse_record(
         search_date += timedelta(days=1)
     
     # 2. 만세력 레코드 조회
-    if birth_calendar == "lunar":
-        manse_record = db.query(Manse).filter(Manse.lunarDate == search_date).first()
-    elif birth_calendar == "solar":
+    if birth_calendar == "solar":
         manse_record = db.query(Manse).filter(Manse.solarDate == search_date).first()
+    
+    # 음력/윤달 분기 처리
+    elif birth_calendar.startswith("lunar"):
+        
+        # 'lunar_leap'일 경우 is_leap_month = 1 (True), 아니면 0 (False)
+        is_leap_month = 1 if birth_calendar == "lunar_leap" else 0
+        
+        manse_record = db.query(Manse).filter(
+            Manse.lunarDate == search_date,
+            # DB의 leapMonth 필드를 is_leap_month 변수 값으로 필터링
+            Manse.leapMonth == is_leap_month 
+        ).first()
+        
     else:
         return None
-        
+    
     if not manse_record:
         return None
 
