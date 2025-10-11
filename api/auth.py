@@ -7,6 +7,8 @@ from core.firebase_auth import verify_firebase_token # Firebase ID 토큰 검증
 from core.db import get_db # DB 세션 의존성
 from core.models import User # SQLAlchemy User 모델
 
+from saju.saju_service import calculate_saju_and_save # 사주 계산 및 저장 함수
+
 router = APIRouter(prefix="/auth")
 
 # 회원가입 요청 모델
@@ -60,6 +62,16 @@ async def register_user(
     )
     
     db.add(user)
+    db.flush() # User의 Primary Key(ID) 미리 확보
+    
+    # 사주 계산 및 저장 함수 호출
+    try:
+        await calculate_saju_and_save(user=user, db=db)
+    except Exception as e:
+        db.rollback()
+        print(f"Saju calculation failed for user {uid}: {e}") 
+        raise HTTPException(status_code=500, detail="회원가입 중 사주 데이터 계산/저장에 실패했습니다.")
+
     db.commit()
     db.refresh(user)
 
