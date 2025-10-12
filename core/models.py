@@ -9,7 +9,7 @@ class User(Base):
     firebase_uid = Column(String(128), unique=True, nullable=False)
     email = Column(String(255), unique=True, nullable=False)
     nickname = Column(String(50))
-    gender = Column(String(1), nullable=False)
+    gender = Column(String(10), nullable=False)
     birth_date = Column(Date, nullable=False)
     birth_time = Column(Time, nullable=True)
     birth_calendar = Column(String(20), nullable=False, default="solar")
@@ -27,7 +27,7 @@ class Manse(Base):
     solarDate = Column(Date, nullable=False)
     lunarDate = Column(Date, nullable=False)
     season = Column(String(10))
-    seasonStartTime = Column(DateTime)
+    seasonStartTime = Column(DateTime, default=None)
     leapMonth = Column(Boolean)
     yearSky = Column(String(10))
     yearGround = Column(String(10))
@@ -35,4 +35,3 @@ class Manse(Base):
     monthGround = Column(String(10))
     daySky = Column(String(10))
     dayGround = Column(String(10))
-    
