@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 from api import auth, users
 
 # 환경 변수 로드 
-load_dotenv()
-service_account_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+load_dotenv(override=True)
+service_account_path = "/etc/secrets/firebase-key.json" 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = service_account_path
 
 # Firebase Admin SDK 초기화 
@@ -20,8 +20,11 @@ firebase_admin.initialize_app(cred)
 # FastAPI 앱 생성
 app = FastAPI()
 
+RENDER_DOMAIN = "https://bab-back.onrender.com" 
+
 origins = [
-    "http://127.0.0.1:5500"
+    "http://127.0.0.1:5500",
+    RENDER_DOMAIN,
 ]
 
 app.add_middleware(
@@ -35,6 +38,7 @@ app.add_middleware(
 # 라우터 등록
 app.include_router(auth.router)
 app.include_router(users.router)
+#app.include_router(saju.router)
 
 os.makedirs("static/profile_images", exist_ok=True)
 
