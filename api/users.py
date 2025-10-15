@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, Depends, UploadFile, File, Form
 from sqlalchemy.orm import Session
-import os, shutil
 
 from core.firebase_auth import verify_firebase_token # Firebase ID 토큰 검증
 from core.db import get_db # DB 세션 의존성
 from core.models import User # SQLAlchemy User 모델
+from core.s3 import get_s3_client, S3_BUCKET_NAME, S3_REGION 
 
 router = APIRouter(prefix="/users")
 
@@ -47,10 +47,11 @@ def get_my_info(
 async def patch_my_info(
     uid: str = Depends(verify_firebase_token),
     db: Session = Depends(get_db),
+    s3_client = Depends(get_s3_client), 
     nickname: str = Form(None),
     profile_image: UploadFile = File(None)
 ):
-    # DB에서 사용자 조회
+    # DB에서 사용자 조회 (여기까지는 로그에서 성공 확인)
     user = db.query(User).filter(User.firebase_uid == uid).first()
     if not user:
         raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
@@ -59,17 +60,27 @@ async def patch_my_info(
     if nickname:
         user.nickname = nickname
 
-    # 프로필 이미지 수정
+    # 프로필 이미지 수정: S3 사용
     if profile_image:
-        save_dir = "static/profile_images"
-        os.makedirs(save_dir, exist_ok=True)
-        file_path = os.path.join(save_dir, f"{uid}_{profile_image.filename}")
+        s3 = s3_client
+        s3_key = f"profile_images/{uid}_{profile_image.filename}"
 
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(profile_image.file, buffer)
+        try:
+            # S3 업로드 실행
+            s3.upload_fileobj(
+                profile_image.file,
+                S3_BUCKET_NAME,              
+                s3_key,                      
+                ExtraArgs={'ContentType': profile_image.content_type}
+            )
 
-        # 웹에서 접근 가능한 URL 형태로 DB 저장
-        user.profile_image = f"http://127.0.0.1:8000/{file_path.replace(os.sep, '/')}"
+            # DB에 저장할 Public URL 생성
+            user.profile_image = f"https://{S3_BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/{s3_key}"
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc() 
+            raise HTTPException(status_code=500, detail=f"S3 업로드 실패: {e}")
 
     db.commit()
     db.refresh(user)
@@ -77,5 +88,5 @@ async def patch_my_info(
     return {
         "message": "회원 정보 수정 성공",
         "nickname": user.nickname,
-        "profile_image": user.profile_image  # URL 반환
+        "profile_image": user.profile_image
     }
