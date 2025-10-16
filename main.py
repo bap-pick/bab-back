@@ -62,7 +62,7 @@ RENDER_DOMAIN = "https://bab-back.onrender.com" # Render 주소 추가
 origins = [
     "http://127.0.0.1:5500",
     RENDER_DOMAIN,
-    "https://bab-front-r8l2duqqh-yooseohyeons-projects.vercel.app",
+    "https://bab-front-jet.vercel.app",
 ]
 
 app.add_middleware(
