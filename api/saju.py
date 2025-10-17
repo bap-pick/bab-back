@@ -24,11 +24,11 @@ def get_user_oheng_scores(db: Session, user_id: str) -> Dict[str, float]:
         raise HTTPException(status_code=404, detail="사용자의 오행 분석 데이터가 아직 준비되지 않았습니다.")
 
     return {
-        "목": user.oheng_wood,
-        "화": user.oheng_fire,
-        "토": user.oheng_earth,
-        "금": user.oheng_metal,
-        "수": user.oheng_water,
+        "목(木)": user.oheng_wood,
+        "화(火)": user.oheng_fire,
+        "토(土)": user.oheng_earth,
+        "금(金)": user.oheng_metal,
+        "수(水)": user.oheng_water,
     }
 
 # 사용자의 사주 오행 비율 분석 결과 반환
