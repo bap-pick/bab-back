@@ -32,20 +32,28 @@ def classify_and_determine_recommendation(
     else:
         oheng_type = "치우침형"
     
-    # 1순위 보충 오행 2개 (가장 낮은 2개)
-    lacking_oheng: List[str] = oheng_names[:2] 
+    lacking_oheng: List[str] = []
+    strong_oheng: List[str] = []
     
-    # 2순위 제어 오행 1개 (가장 높은 1개)
-    strong_oheng: List[str] = oheng_names[-1:] 
-    
-    # 무형은 보충 오행만 강조
-    if oheng_type == "무형":
-        strong_oheng = []
-        
-    # 균형형은 보충/제어가 불필요하므로 빈 리스트 반환 (일진 운세로 대체할 예정)
     if oheng_type == "균형형":
         lacking_oheng = []
-        strong_oheng = []
+        strong_oheng = oheng_names[-1:] # 가장 높은 오행 1개만 제어 대상으로 지정
+    
+    elif oheng_type == "치우침형":
+        lacking_oheng = [name for name, value in sorted_oheng if value < THRESHOLD_BALANCE_LOW][:2]
+        all_strong_oheng = [name for name, value in sorted_oheng if value > THRESHOLD_BALANCE_HIGH]
+        
+        strong_oheng = all_strong_oheng[-2:]
+        
+        # 예외 처리: 25.0%를 넘는 오행이 하나도 없다면, 가장 높은 1개만 제어 오행으로 지정 
+        if not strong_oheng:
+            strong_oheng = oheng_names[-1:] 
+            
+    else: # 무형
+        # 가장 낮은 2개를 보충 오행으로 설정
+        lacking_oheng = oheng_names[:2] 
+        # 가장 높은 오행 1개를 제어 오행으로 추가
+        strong_oheng = oheng_names[-1:]
     
     result["oheng_type"] = oheng_type
     result["primary_supplement_oheng"] = lacking_oheng

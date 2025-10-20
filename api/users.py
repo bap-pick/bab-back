@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, Depends, UploadFile, File, Form
 from sqlalchemy.orm import Session
+from typing import Dict, Any # Dict, Any 타입 힌트 추가
 
 from core.firebase_auth import verify_firebase_token # Firebase ID 토큰 검증
 from core.db import get_db # DB 세션 의존성
 from core.models import User # SQLAlchemy User 모델
 from core.s3 import get_s3_client, S3_BUCKET_NAME, S3_REGION 
+from saju.saju_service import calculate_today_saju_iljin # 오늘의 일진 계산
 
 router = APIRouter(prefix="/users")
 
@@ -19,8 +21,19 @@ def get_my_info(
     user = db.query(User).filter(User.firebase_uid == uid).first()
     if not user:
         raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
+        
+    # 오늘의 일진 기반 오행 점수 계산
+    today_oheng_scores: Dict[str, float] = {}
+    try:
+        iljin_data = calculate_today_saju_iljin(user, db)
+        today_oheng_scores = iljin_data["today_oheng_percentages"]
+        
+    except Exception as e:
+        print(f"Error calculating today's saju for {uid}: {e}")
+        today_oheng_scores = {k: 0.0 for k in ["ohengWood", "ohengFire", "ohengEarth", "ohengMetal", "ohengWater"]}
 
-    user_dict = {
+    # 사용자 정보 딕셔너리 생성
+    user_dict: Dict[str, Any] = {
         "email": user.email,
         "nickname": user.nickname,
         "gender": user.gender,
@@ -28,13 +41,15 @@ def get_my_info(
         "birthTime": user.birth_time,
         "birthCalendar": user.birth_calendar,
         "profileImage": user.profile_image,
-        "ohengWood": user.oheng_wood,
-        "ohengFire": user.oheng_fire,
-        "ohengEarth": user.oheng_earth,
-        "ohengMetal": user.oheng_metal,
-        "ohengWater": user.oheng_water,
+        
+        # 오늘의 일진에 따라 보정된 오행 비율
+        "ohengWood": today_oheng_scores.get("ohengWood", 0.0),
+        "ohengFire": today_oheng_scores.get("ohengFire", 0.0),
+        "ohengEarth": today_oheng_scores.get("ohengEarth", 0.0),
+        "ohengMetal": today_oheng_scores.get("ohengMetal", 0.0),
+        "ohengWater": today_oheng_scores.get("ohengWater", 0.0),
     }
-
+    
     if fields:
         requested_fields = set(f.strip() for f in fields.split(","))
         filtered_user = {k: v for k, v in user_dict.items() if k in requested_fields}
@@ -69,8 +84,8 @@ async def patch_my_info(
             # S3 업로드 실행
             s3.upload_fileobj(
                 profile_image.file,
-                S3_BUCKET_NAME,              
-                s3_key,                      
+                S3_BUCKET_NAME,             
+                s3_key,                     
                 ExtraArgs={'ContentType': profile_image.content_type}
             )
 

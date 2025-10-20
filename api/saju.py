@@ -8,6 +8,7 @@ from core.models import User # SQLAlchemy User 모델
 from typing import Dict
 from saju.oheng_analyzer import classify_and_determine_recommendation 
 from saju.message_generator import define_oheng_messages
+from saju.saju_service import calculate_today_saju_iljin
 
 router = APIRouter(prefix="/saju")
 
@@ -37,34 +38,54 @@ async def get_personalized_recommendation(
     uid: str = Depends(verify_firebase_token),
     db: Session = Depends(get_db)
 ):
-    # 1. DB에서 오행 비율 데이터 가져오기
+    # 1. 사용자 조회
+    user = db.query(User).filter(User.firebase_uid == uid).first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="등록된 사용자를 찾을 수 없습니다.")
+
+    # 2. 오늘의 일진 기반 오행 비율 계산
     try:
-        oheng_scores = get_user_oheng_scores(db, uid)
+        # 오늘의 일진에 따라 보정된 오행 비율을 가져오기
+        iljin_data = calculate_today_saju_iljin(user, db)
+        oheng_scores_english = iljin_data["today_oheng_percentages"] # 영문 키: ohengWood, ohengFire 등
+        
+        # 영문 키를 한글 키로 변환하는 맵핑
+        oheng_scores_korean = {
+            "목(木)": oheng_scores_english.get("ohengWood", 0.0),
+            "화(火)": oheng_scores_english.get("ohengFire", 0.0),
+            "토(土)": oheng_scores_english.get("ohengEarth", 0.0),
+            "금(金)": oheng_scores_english.get("ohengMetal", 0.0),
+            "수(水)": oheng_scores_english.get("ohengWater", 0.0),
+        }
+
+        
     except HTTPException as e:
         raise e
     except Exception as e:
-        # 기타 DB 연결 또는 쿼리 오류 처리
-        print(f"DB Error fetching user data: {e}")
-        raise HTTPException(status_code=500, detail="데이터베이스에서 사용자 데이터를 가져오는 데 실패했습니다.")
+        # 기타 오류 처리
+        print(f"Error calculating today's saju for {uid}: {e}")
+        raise HTTPException(status_code=500, detail="오늘의 일진 기반 오행 분석 데이터를 가져오는 데 실패했습니다.")
         
-    # 2. 오행 비율 유형 분류 로직 실행
-    analysis_result = classify_and_determine_recommendation(oheng_scores)
+    # 3. 오행 비율 유형 분류 로직 실행 (보정된 오행 비율 사용)
+    analysis_result = classify_and_determine_recommendation(oheng_scores_korean)
+
     
     oheng_type = analysis_result["oheng_type"]
     lacking_oheng = analysis_result["primary_supplement_oheng"]
     strong_oheng = analysis_result["secondary_control_oheng"]
 
-    # 3. 규칙 기반 메시지 생성
+    # 4. 규칙 기반 메시지 생성
     headline, advice = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)
     
-    # 4. 최종 결과 반환
+    # 5. 최종 결과 반환
     return {
         "user_id": uid,
-        "oheng_analysis_scores": oheng_scores,   
-        "user_type": oheng_type,                 
-        "recommendation_headline": headline,     
-        "recommendation_advice": advice,         
-        "supplement_oheng": lacking_oheng,       
-        "control_oheng": strong_oheng,           
-        "recommended_restaurants": []            
+        "oheng_analysis_scores": oheng_scores_korean, 
+        "user_type": oheng_type, 
+        "recommendation_headline": headline, 
+        "recommendation_advice": advice, 
+        "supplement_oheng": lacking_oheng, 
+        "control_oheng": strong_oheng, 
+        "recommended_restaurants": []
     }

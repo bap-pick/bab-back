@@ -19,6 +19,7 @@ class User(Base):
     oheng_earth = Column(Float, nullable=True)
     oheng_metal = Column(Float, nullable=True)
     oheng_water = Column(Float, nullable=True)
+    day_sky = Column(String(10), nullable=True)
 
 class Manse(Base):
     __tablename__ = "manses"

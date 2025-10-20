@@ -512,3 +512,26 @@ def get_sixty_gapja():
         2: {0: "壬", 1: "戌"},
         3: {0: "癸", 1: "亥"},
     }
+    
+    
+# 천간/지지 글자를 입력받아 오행 반환
+def get_five_circle_from_char(char: str) -> str:
+    # 천간 처리 로직: 천간-오행 직접 매핑 
+    sky_oheng_map = {
+        '甲': '목(木)', '乙': '목(木)', '丙': '화(火)', '丁': '화(火)', 
+        '戊': '토(土)', '己': '토(土)', '庚': '금(金)', '辛': '금(金)', 
+        '壬': '수(水)', '癸': '수(水)',
+    }
+    
+    if char in sky_oheng_map:
+        return sky_oheng_map[char]
+
+    # 지지 처리 로직
+    jijangan_data = get_jijangan() # 지지 내부 지장간 가져오기
+    if char in jijangan_data:
+        ground_data = jijangan_data[char]
+        last_key = max(ground_data.keys()) # 지장간 데이터에서 마지막 키(정기) 가져오기
+        # 정기 데이터 내부에서 해당 지지의 주된 오행 반환
+        return ground_data[last_key].get('fiveCircle', '토(土)') 
+    
+    return '토(土)' # 예외 처리
