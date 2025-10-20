@@ -4,7 +4,7 @@ import firebase_admin
 from firebase_admin import credentials
 import os
 from dotenv import load_dotenv
-from api import auth, users, saju
+from api import auth, users, saju, chat
 from core.s3 import initialize_s3_client
 import json 
 
@@ -77,3 +77,4 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(saju.router)
+app.include_router(chat.router)
