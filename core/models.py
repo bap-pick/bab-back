@@ -1,5 +1,6 @@
-# DB 테이블과 매핑되는 SQLAlchemy 모델을 정의
-from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float
+from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float, TIMESTAMP, Text, ForeignKey, Enum
+from sqlalchemy.orm import relationship
+from sqlalchemy import func
 from core.db import Base
 
 class User(Base):
@@ -36,3 +37,41 @@ class Manse(Base):
     monthGround = Column(String(10))
     daySky = Column(String(10))
     dayGround = Column(String(10))
+    
+class ChatRoom(Base):
+    __tablename__ = 'Chat_rooms'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(30), nullable=True)
+    is_group = Column(Boolean, nullable=False, default=False)
+    last_message_id = Column(Integer, nullable=True) 
+    created_at = Column(TIMESTAMP, nullable=False, default=func.now())
+    updated_at = Column(TIMESTAMP, nullable=False, default=func.now(), onupdate=func.now())
+
+    members = relationship("ChatroomMember", back_populates="chatroom", cascade="all, delete-orphan")
+    messages = relationship("ChatMessage", back_populates="chatroom", cascade="all, delete-orphan")
+
+class ChatroomMember(Base):
+    __tablename__ = 'Chatroom_members'
+
+    user_id = Column(Integer, ForeignKey('Users.id'), primary_key=True) 
+    chatroom_id = Column(Integer, ForeignKey('Chat_rooms.id'), primary_key=True)
+    
+    role = Column(String(20), nullable=False, default='member')
+    joined_at = Column(TIMESTAMP, nullable=False, default=func.now())
+
+    chatroom = relationship("ChatRoom", back_populates="members")
+
+class ChatMessage(Base):
+    __tablename__ = 'Chat_messages'
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey('Users.id'), nullable=False) 
+    chatroom_id = Column(Integer, ForeignKey('Chat_rooms.id'), nullable=False)
+    
+    content = Column(Text, nullable=False)
+    message_type = Column(Enum('text', 'image'), nullable=False, default='text')
+    image_url = Column(String(255), nullable=True)
+    send_at = Column(TIMESTAMP, nullable=False, default=func.now())
+
+    chatroom = relationship("ChatRoom", back_populates="messages")
