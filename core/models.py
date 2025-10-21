@@ -1,7 +1,9 @@
-from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float, TIMESTAMP, Text, ForeignKey, Enum
+# DB 테이블과 매핑되는 SQLAlchemy 모델을 정의
+from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from sqlalchemy import func
+from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float, TIMESTAMP, Text, ForeignKey, Enum, func
 from core.db import Base
+from datetime import datetime
 
 class User(Base):
     __tablename__ = "Users"
@@ -22,6 +24,23 @@ class User(Base):
     oheng_water = Column(Float, nullable=True)
     day_sky = Column(String(10), nullable=True)
 
+    
+class ChatRoom(Base):
+    __tablename__ = "Chat_rooms"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    
+class ChatMessage(Base):
+    __tablename__ = "Chat_messages"
+    id = Column(Integer, primary_key=True) #메세지 고유 id
+    room_id = Column(Integer)   # 채팅방 id..chat_rooms.id
+    sender_id = Column(String) # 메세지 보낸사람
+    role = Column(String) # 유저인지 ai 인지
+    content = Column(Text) #내용
+    timestamp = Column(DateTime, default=datetime.utcnow) #보낸시간
+
 class Manse(Base):
     __tablename__ = "manses"
 
@@ -37,41 +56,3 @@ class Manse(Base):
     monthGround = Column(String(10))
     daySky = Column(String(10))
     dayGround = Column(String(10))
-    
-class ChatRoom(Base):
-    __tablename__ = 'Chat_rooms'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(30), nullable=True)
-    is_group = Column(Boolean, nullable=False, default=False)
-    last_message_id = Column(Integer, nullable=True) 
-    created_at = Column(TIMESTAMP, nullable=False, default=func.now())
-    updated_at = Column(TIMESTAMP, nullable=False, default=func.now(), onupdate=func.now())
-
-    members = relationship("ChatroomMember", back_populates="chatroom", cascade="all, delete-orphan")
-    messages = relationship("ChatMessage", back_populates="chatroom", cascade="all, delete-orphan")
-
-class ChatroomMember(Base):
-    __tablename__ = 'Chatroom_members'
-
-    user_id = Column(Integer, ForeignKey('Users.id'), primary_key=True) 
-    chatroom_id = Column(Integer, ForeignKey('Chat_rooms.id'), primary_key=True)
-    
-    role = Column(String(20), nullable=False, default='member')
-    joined_at = Column(TIMESTAMP, nullable=False, default=func.now())
-
-    chatroom = relationship("ChatRoom", back_populates="members")
-
-class ChatMessage(Base):
-    __tablename__ = 'Chat_messages'
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey('Users.id'), nullable=False) 
-    chatroom_id = Column(Integer, ForeignKey('Chat_rooms.id'), nullable=False)
-    
-    content = Column(Text, nullable=False)
-    message_type = Column(Enum('text', 'image'), nullable=False, default='text')
-    image_url = Column(String(255), nullable=True)
-    send_at = Column(TIMESTAMP, nullable=False, default=func.now())
-
-    chatroom = relationship("ChatRoom", back_populates="messages")
