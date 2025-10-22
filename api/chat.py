@@ -7,9 +7,13 @@ from core.firebase_auth import verify_firebase_token
 import datetime
 import os
 from dotenv import load_dotenv
+from typing import Optional
+from google import genai
+from google.genai import types
+from core.config import GEMMA_API_KEY
 
-# 최신 Google Gen AI SDK
-import google.genai as genai
+client = genai.Client(api_key=GEMMA_API_KEY) 
+model_name = "gemma-3-4b-it"
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -19,7 +23,8 @@ class MessageRequest(BaseModel):
     message: str
 
 class ChatRoomCreateRequest(BaseModel):
-    room_id: int
+    name: Optional[str] = None
+    is_group: bool = False
 
 Chat_rooms = {}
 
@@ -34,15 +39,15 @@ async def create_chatroom(
     db: Session = Depends(get_db)
 ):
 
-    chatroom = ChatRoom(name=str(data.room_id), is_group=False)
+    chatroom = ChatRoom(name=data.name, is_group=data.is_group)
+    
     db.add(chatroom)
     db.commit()
-    db.refresh(chatroom)
+    db.refresh(chatroom) # DB에서 자동 생성된 chatroom.id를 가져옴
 
     room_id_str = str(chatroom.id)
     Chat_rooms[room_id_str] = []
-    print(f"메모리 chat_rooms에 추가됨: {room_id_str}")
-
+    
     return {"message": "채팅방 생성 완료", "chatroom_id": room_id_str}
 
 # ---------------- 채팅방 목록 조회 ----------------
@@ -78,17 +83,17 @@ async def delete_chatroom(
 
 # ---------------- 메시지 전송 ----------------
 @router.post("/send")
-def send_message(
+async def send_message(
     request: MessageRequest,
     uid: str = Depends(verify_firebase_token),
     db: Session = Depends(get_db)
 ):
-    # 1️⃣ 채팅방 확인
+    # 채팅방 확인
     chatroom = db.query(ChatRoom).filter(ChatRoom.id == request.room_id).first()
     if not chatroom:
         raise HTTPException(status_code=404, detail="채팅방을 찾을 수 없음")
 
-    # 2️⃣ 유저 메시지 DB 저장
+    # 유저 메시지 DB 저장
     chat_message = ChatMessage(
         room_id=chatroom.id,
         sender_id=uid,
@@ -100,20 +105,20 @@ def send_message(
     db.commit()
     db.refresh(chat_message)
 
-    # 3️⃣ 클라우드 LLM 호출
+    # LLM 클라우드 API 호출
     try:
         response = client.models.generate_content(
-            model="gemma3:4b",  # 사용할 모델
-            content=[request.message]  # 단일 문자열
+            model=model_name,
+            contents=[request.message],
+            config=types.GenerateContentConfig(temperature=0)
         )
         
-
-        assistant_reply = response.output_text.strip() if response.output_text else "응답 없음"
+        assistant_reply = response.text.strip() if response.text else "응답 없음"
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM API 호출 실패: {e}")
 
-    # 4️⃣ AI 답변 DB 저장
+    # AI 답변 DB 저장
     assistant_message = ChatMessage(
         room_id=chatroom.id,
         sender_id="assistant",
@@ -125,7 +130,7 @@ def send_message(
     db.commit()
     db.refresh(assistant_message)
 
-    # 5️⃣ 최종 응답 반환
+    # 최종 응답 반환
     return {
         "reply": {"role": "assistant", "content": assistant_reply},
         "user_message_id": chat_message.id
