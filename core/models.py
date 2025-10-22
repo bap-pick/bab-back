@@ -24,13 +24,12 @@ class User(Base):
     oheng_water = Column(Float, nullable=True)
     day_sky = Column(String(10), nullable=True)
 
-    
 class ChatRoom(Base):
     __tablename__ = "Chat_rooms"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
+    name = Column(String(30), nullable=True)     
+    is_group = Column(Boolean, nullable=False, default=False)    
+    last_message_id = Column(Integer, nullable=True) 
     
 class ChatMessage(Base):
     __tablename__ = "Chat_messages"
