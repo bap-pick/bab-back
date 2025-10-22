@@ -52,10 +52,8 @@ if FIREBASE_KEY_TO_USE:
             
     except Exception as e:
         print(f"Firebase 초기화 중 심각한 오류: {e}")
-        # 초기화 실패 시 앱이 계속 실행되도록 pass 처리
         pass 
 else:
-    # 키가 없어 초기화가 불가능한 경우 (대개 로컬 설정 오류)
     print("경고: Firebase를 사용할 수 없습니다. 서비스 기능에 제한이 있을 수 있습니다.")
     
 
