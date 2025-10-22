@@ -11,6 +11,7 @@ from core.s3 import initialize_s3_client
 import tempfile
 from llm_service import load_fortune, handle_user_question_with_fortune
 import json
+
 # 환경 변수 로드
 load_dotenv(override=True) 
 
@@ -39,12 +40,7 @@ else:
 # Firebase Admin SDK 초기화
 if FIREBASE_KEY_TO_USE:
     try:
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as tmp_file:
-            tmp_file.write(GOOGLE_APPLICATION_CREDENTIALS)
-            temp_path = tmp_file.name
-
-        cred = credentials.Certificate(temp_path)
-        firebase_admin.initialize_app(cred)
+        cred = credentials.Certificate(FIREBASE_KEY_TO_USE)
         
         if not firebase_admin._apps:
             firebase_admin.initialize_app(cred)
@@ -55,7 +51,6 @@ if FIREBASE_KEY_TO_USE:
         pass 
 else:
     print("경고: Firebase를 사용할 수 없습니다. 서비스 기능에 제한이 있을 수 있습니다.")
-    
 
 
 # S3 클라이언트 초기화 (Render/로컬 환경 변수에서 AWS_ACCESS_KEY_ID 등을 사용)
