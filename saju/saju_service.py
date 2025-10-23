@@ -143,7 +143,7 @@ def calculate_today_saju_iljin(
 ) -> Dict: 
     user_day_sky = user.day_sky
     
-    # Users 테이블에 day_sky만 없는 경우 복구 (로직 유지)
+    # Users 테이블에 day_sky만 없는 경우
     if not user_day_sky: 
         try:
             day_pillar = _get_user_day_pillar(db, user) 
@@ -155,22 +155,20 @@ def calculate_today_saju_iljin(
             raise 
         except Exception:
             db.rollback()
-            raise HTTPException(status_code=500, detail="오래된 사용자 일간 데이터 복구 중 오류가 발생했습니다.")
+            raise HTTPException(status_code=500, detail="기존 유저 일간 데이터 불러오는 중 오류 발생")
         
-    # 1: 오늘의 일진(日辰) 데이터 확보
+    # 1: 일진 - 오늘의 간지 데이터 가져오기
     today_date = date.today()
     today_manse = db.query(Manse).filter(Manse.solarDate == today_date).first() 
     
     if not today_manse or not user_day_sky:
-        raise HTTPException(status_code=404, detail="계산에 필요한 일진 데이터 또는 사용자 정보가 부족합니다.")
+        raise HTTPException(status_code=404, detail="계산에 필요한 유저 정보 혹은 일진 데이터가 부족함")
 
     today_day_sky = today_manse.daySky      # 오늘의 일간
     today_day_ground = today_manse.dayGround # 오늘의 일지
     
-    # 🚨 디버그 1: 오늘의 일진 출력
-    print(f"DEBUG_1: 오늘의 일진: 일간={today_day_sky}, 일지={today_day_ground}")
 
-    # 2. 십신 계산 (로직 유지)
+    # 2. 십신 계산
     try:
         ten_star_map = get_ten_star() 
         ten_star_data = ten_star_map.get(user_day_sky, {}).get(today_day_sky)
@@ -180,7 +178,7 @@ def calculate_today_saju_iljin(
     except Exception:
         main_ten_star = "십신 계산 오류"
 
-    # 오늘의 일진 오행 키를 "목(木)" 형태로 강제 변환하는 헬퍼 함수
+    # 오늘의 일진 오행 키를 "목(木)" 형태로 변환
     def get_korean_hanja_oheng(oheng_korean: str) -> str:
         mapping = {
             "목": "목(木)", "화": "화(火)", "토": "토(土)", "금": "금(金)", "수": "수(水)"
@@ -199,7 +197,7 @@ def calculate_today_saju_iljin(
 
     # 3: 오행 비율 보정 
     
-    # DB 로드 시점에 float()으로 강제 형변환 및 None/잘못된 값 처리
+    # DB 로드 시 float()으로 강제 형변환 및 None/잘못된 값 처리
     def get_user_oheng_value(value):
         try:
             return float(value) if value is not None else 0.0
@@ -215,8 +213,8 @@ def calculate_today_saju_iljin(
         "수(水)": get_user_oheng_value(user.oheng_water), 
     }
     
-    # 🚨 디버그 2: 오늘의 일진 보정 전 사용자 오행 비율 출력
-    print(f"DEBUG_2: 보정 전 사용자 오행 비율 (총합 {sum(oheng_scores.values()):.2f}): {oheng_scores}")
+    # 일진 보정 전 생년월일시에 따라 결정된 사용자 오행 비율
+    print(f"보정 전 사용자 오행 비율 (총합 {sum(oheng_scores.values()):.2f}): {oheng_scores}")
     
     today_scores = oheng_scores.copy()
     
@@ -227,9 +225,6 @@ def calculate_today_saju_iljin(
     today_sky_oheng_raw = get_five_circle_from_char(today_day_sky)
     today_ground_oheng_raw = get_five_circle_from_char(today_day_ground)
 
-    # 🚨 디버그 3: get_five_circle_from_char의 원본 반환값 출력
-    print(f"DEBUG_3: get_five_circle_from_char 원본: 일간='{today_sky_oheng_raw}', 일지='{today_ground_oheng_raw}'")
-
     # 키 통일 및 가중치 추가
     today_sky_oheng = None
     today_ground_oheng = None
@@ -238,24 +233,18 @@ def calculate_today_saju_iljin(
         today_sky_oheng = get_korean_hanja_oheng(today_sky_oheng_raw)
         if today_sky_oheng in today_scores:
             today_scores[today_sky_oheng] += WEIGHT_SKY
-            # 🚨 디버그 4: 일간 가중치 적용 성공 확인
-            print(f"DEBUG_4: 일간 가중치 {WEIGHT_SKY} 적용 성공. 키: {today_sky_oheng}")
         else:
-            # 🚨 디버그 4-FAIL: 키 불일치 실패 확인
-            print(f"DEBUG_4-FAIL: 일간 키 불일치. today_sky_oheng: '{today_sky_oheng}'")
+            print(f"일간 키 불일치. today_sky_oheng: '{today_sky_oheng}'")
     
     if today_ground_oheng_raw:
         today_ground_oheng = get_korean_hanja_oheng(today_ground_oheng_raw)
         if today_ground_oheng in today_scores:
             today_scores[today_ground_oheng] += WEIGHT_GROUND
-            # 🚨 디버그 5: 일지 가중치 적용 성공 확인
-            print(f"DEBUG_5: 일지 가중치 {WEIGHT_GROUND} 적용 성공. 키: {today_ground_oheng}")
         else:
-            # 🚨 디버그 5-FAIL: 키 불일치 실패 확인
-            print(f"DEBUG_5-FAIL: 일지 키 불일치. today_ground_oheng: '{today_ground_oheng}'")
+            print(f"일지 키 불일치. today_ground_oheng: '{today_ground_oheng}'")
         
-    # 🚨 디버그 6: 가중치 적용 후 점수 출력
-    print(f"DEBUG_6: 가중치 적용 후 점수 (총합 {sum(today_scores.values()):.2f}): {today_scores}")
+    # 가중치 적용 후 오행 비율 출력
+    print(f"가중치 적용 후 오행 비율 (총합 {sum(today_scores.values()):.2f}): {today_scores}")
 
     # 100% 재정규화
     total_sum = sum(today_scores.values()) 
@@ -264,8 +253,8 @@ def calculate_today_saju_iljin(
     else:
         today_oheng_percentages = {k: round((v / total_sum) * 100, 2) for k, v in today_scores.items()}
     
-    # 🚨 디버그 7: 재정규화 후 최종 비율 출력
-    print(f"DEBUG_7: 최종 보정된 오행 비율 (총합 {sum(today_oheng_percentages.values()):.2f}): {today_oheng_percentages}")
+    # 100% 재정규화 후 최종 오행 비율 출력
+    print(f"최종 보정된 오행 비율 (총합 {sum(today_oheng_percentages.values()):.2f}): {today_oheng_percentages}")
     
     # 최종 결과 반환
     return {

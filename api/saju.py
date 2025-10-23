@@ -65,12 +65,12 @@ async def get_personalized_recommendation(
     except Exception as e:
         # 기타 오류 처리
         print(f"Error calculating today's saju for {uid}: {e}")
-        raise HTTPException(status_code=500, detail="오늘의 일진 기반 오행 분석 데이터를 가져오는 데 실패했습니다.")
+        raise HTTPException(status_code=500, detail="간지 기반 오행 데이터를 가져오는 데 실패했습니다.")
         
-    # 3. 오행 비율 유형 분류 로직 실행 (보정된 오행 비율 사용)
+    # 3. 오행 비율 유형 분류 함수 실행 (오늘의 간지에 따라 보정된 오행 비율 사용)
     analysis_result = classify_and_determine_recommendation(oheng_scores_korean)
 
-    
+    # 3-1. 함수 실행 결과: 오행 유형, 부족 오행, 과다 오행
     oheng_type = analysis_result["oheng_type"]
     lacking_oheng = analysis_result["primary_supplement_oheng"]
     strong_oheng = analysis_result["secondary_control_oheng"]

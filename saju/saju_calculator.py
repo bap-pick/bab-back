@@ -1,8 +1,5 @@
-# saju/saju_calculator.py
 from datetime import time, datetime
 from typing import Optional, Dict
-
-# saju/saju_data.py에서 함수를 import
 from saju.saju_data import get_time_ju_data, get_time_ju_data2, get_ten_star, get_jijangan
 
 # 일간과 출생 시각을 통해 시주 계산
