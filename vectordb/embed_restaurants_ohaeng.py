@@ -1,7 +1,7 @@
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from .prepare_restaurant_docs import create_restaurant_documents 
-from .vectordb_util import (
+from vectordb.prepare_restaurant_docs import create_restaurant_documents 
+from vectordb.vectordb_util import (
     get_chroma_client_and_collection,
     COLLECTION_NAME_OHAENG, 
     COLLECTION_NAME_RESTAURANTS, 

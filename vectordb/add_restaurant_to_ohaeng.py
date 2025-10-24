@@ -10,7 +10,7 @@ import re
 from core.db import SessionLocal 
 from core.models import Restaurant 
 from core.config import GEMMA_API_KEY 
-from .vectordb_util import (
+from vectordb.vectordb_util import (
     get_chroma_client_and_collection,
     COLLECTION_NAME_RESTAURANTS,
     COLLECTION_NAME_OHAENG,

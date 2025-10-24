@@ -1,7 +1,7 @@
 import boto3
 from botocore.exceptions import NoCredentialsError
 from fastapi import HTTPException
-from .config import AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_REGION, AWS_S3_BUCKET_NAME
+from core.config import AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_S3_REGION, AWS_S3_BUCKET_NAME
 
 # S3 클라이언트 및 버킷 정보 설정
 S3_CLIENT = None
