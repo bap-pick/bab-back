@@ -47,7 +47,7 @@ def get_chroma_client_and_collection(
         print(f"ChromaDB 연결/컬렉션 로드 실패: {e}")
         return None, None
     
-# MySQL에서 특정 ID의 식당과 메뉴를 조회 -> Document 객체 반환
+# MySQL에서 특정 ID의 식당과 메뉴 조회 후 Document 객체 생성
 def fetch_and_create_document(restaurant_id: int, db: Session) -> Optional[Document]:
     try:
         restaurant_record = db.query(Restaurant).options(
@@ -81,7 +81,7 @@ def fetch_and_create_document(restaurant_id: int, db: Session) -> Optional[Docum
         print(f"DB 조회 오류: {e}")
         return None
 
-# ChromaDB 수정: 특정 ID의 식당 데이터를 삭제 후 재저장
+# 특정 ID의 식당 데이터를 ChromaDB에서 삭제 후 재저장
 def restore_restaurant_data(target_id: int):    
     db: Optional[Session] = None
     
@@ -151,7 +151,7 @@ def restore_restaurant_data(target_id: int):
             db.close()
 
 
-# 여러 문서 삭제: TARGET_RESTAURANT_IDS 기준
+# 여러 식당 데이터를 ChromaDB에서 일괄 삭제 (target_ids [123, 432] 여러 id 리스트)
 def delete_restaurant_data_batch(target_ids: List[int]):
     # ChromaDB 클라이언트 연결 및 LangChain Chroma 로드
     print(f"ChromaDB 클라이언트 연결 시작")
@@ -180,8 +180,7 @@ def delete_restaurant_data_batch(target_ids: List[int]):
     print(f"\n 일괄 삭제 완료: {deleted_count}개를 삭제 (총 데이터 수: {post_delete_count}개)")
 
 
-        
-# 특정 ID 문서 조회
+# 특정 ID의 식당 문서 조회
 def check_restaurant_document(target_id: int):
     # 1. ChromaDB 클라이언트 연결 및 컬렉션 로드
     print(f"ChromaDB 클라이언트 연결 시작")
@@ -228,7 +227,8 @@ def check_restaurant_document(target_id: int):
         else:
             print(f"식당 ID {target_id}에 해당하는 문서를 찾지 못함")
 
-# 전체 컬렉션 내용 조회
+
+# 컬렉션의 원본 데이터 일부 조회
 def display_raw_collection_data(chroma_client: chromadb.HttpClient, collection_name: str, limit: int):
     try:
         collection = chroma_client.get_collection(name=collection_name)
@@ -251,6 +251,7 @@ def display_raw_collection_data(chroma_client: chromadb.HttpClient, collection_n
     except Exception as e:
         print(f"{collection_name} 컬렉션 출력 중 오류 발생: {e}")
 
+# 모든 컬렉션의 데이터 확인
 def check_all_collections():
     print(f"ChromaDB 연결 시작")
     
