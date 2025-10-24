@@ -1,7 +1,5 @@
-# DB 테이블과 매핑되는 SQLAlchemy 모델을 정의
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float, TIMESTAMP, Text, ForeignKey, Enum, func
+from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float, Text, ForeignKey
 from core.db import Base
 from datetime import datetime
 
@@ -55,3 +53,36 @@ class Manse(Base):
     monthGround = Column(String(10))
     daySky = Column(String(10))
     dayGround = Column(String(10))
+
+class Restaurant(Base):
+    __tablename__ = "Restaurants"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    name = Column(String(100), nullable=False)
+    category = Column(String(50), nullable=False)
+    address = Column(String(200), nullable=False)
+    phone = Column(String(20), nullable=True)
+    
+    # 식당의 상위 오행 3개를 저장합니다. (예: 木, 火, 土)
+    top_ohaeng_1 = Column(String(10), nullable=True)
+    top_ohaeng_2 = Column(String(10), nullable=True)
+    top_ohaeng_3 = Column(String(10), nullable=True)
+    
+    # Menu 모델과 연결: Restaurant 객체에서 rest.menus로 메뉴 리스트를 가져오기 위함
+    menus = relationship("Menu", back_populates="restaurant")
+
+    def __repr__(self):
+        return f"<Restaurant(id={self.id}, name='{self.name}', category='{self.category}')>"
+
+class Menu(Base):
+    __tablename__ = "Menus"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    menu_name = Column(String(100), nullable=True)
+    restaurant_id = Column(Integer, ForeignKey('Restaurants.id'), nullable=False)
+    
+    # Restaurant 모델과 연결: Menu 객체에서 menu.restaurant로 해당 식당 객체를 가져오기 위함
+    restaurant = relationship("Restaurant", back_populates="menus")
+    
+    def __repr__(self):
+        return f"<Menu(id={self.id}, menu_name='{self.menu_name}', restaurant_id={self.restaurant_id})>"
