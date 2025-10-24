@@ -137,7 +137,7 @@ def _get_user_day_pillar(db: Session, user: User) -> Dict:
     }
 
 # 오늘의 일진에 따라 사주 오행 비율 보정
-def calculate_today_saju_iljin(
+async def calculate_today_saju_iljin(
     user: User,
     db: Session
 ) -> Dict: 
@@ -156,7 +156,17 @@ def calculate_today_saju_iljin(
         except Exception:
             db.rollback()
             raise HTTPException(status_code=500, detail="기존 유저 일간 데이터 불러오는 중 오류 발생")
-        
+    
+    # 사용자의 오행 값이 없는 경우 생년월일시에 따라 오행 계산 후 저장
+    oheng_fields = ["oheng_wood", "oheng_fire", "oheng_earth", "oheng_metal", "oheng_water"]
+    if all(getattr(user, f) is None for f in oheng_fields):
+        try:
+            await calculate_saju_and_save(user, db)
+            db.refresh(user)
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"사용자 오행 데이터 계산 실패: {e}")
+
     # 1: 일진 - 오늘의 간지 데이터 가져오기
     today_date = date.today()
     today_manse = db.query(Manse).filter(Manse.solarDate == today_date).first() 

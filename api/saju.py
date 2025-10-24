@@ -47,7 +47,7 @@ async def get_personalized_recommendation(
     # 2. 오늘의 일진 기반 오행 비율 계산
     try:
         # 오늘의 일진에 따라 보정된 오행 비율을 가져오기
-        iljin_data = calculate_today_saju_iljin(user, db)
+        iljin_data = await calculate_today_saju_iljin(user, db)
         oheng_scores_english = iljin_data["today_oheng_percentages"] # 영문 키: ohengWood, ohengFire 등
         
         # 영문 키를 한글 키로 변환하는 맵핑
@@ -59,7 +59,6 @@ async def get_personalized_recommendation(
             "수(水)": oheng_scores_english.get("ohengWater", 0.0),
         }
 
-        
     except HTTPException as e:
         raise e
     except Exception as e:
