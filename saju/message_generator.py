@@ -1,4 +1,5 @@
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
+from collections import Counter
 
 # 과다 오행의 상극 오행 반환: 상극 관계(木극土, 火극金, 土극水, 金극木, 水극火)
 def get_counter_oheng(oheng: str) -> str: 	
@@ -15,10 +16,16 @@ def _get_oheng_string_list(oheng_list: List[str]) -> str:
     if len(oheng_list) == 1: return oheng_list[0]
     return f"{', '.join(oheng_list[:-1])}와 {oheng_list[-1]}"
 
+# 추천 오행을 Counter에 업데이트
+def _update_oheng_counter(oheng_counter: Counter, ohengs: List[str]):
+    for oheng in ohengs:
+        oheng_counter[oheng] += 1
+        
 # 오행 유형에 따라 추천 메시지 생성
-def define_oheng_messages(lacking: List[str], strong: List[str], oheng_type: str) -> Tuple[str, str]:
+def define_oheng_messages(lacking: List[str], strong: List[str], oheng_type: str) -> Tuple[str, str, Dict[str, int]]:
     analysis_headline = ""
     advice_parts = [] 
+    recommended_oheng_counter = Counter()
     
     # 제목 생성
     if oheng_type == "균형형":
@@ -40,6 +47,8 @@ def define_oheng_messages(lacking: List[str], strong: List[str], oheng_type: str
         advice_parts.append(
             f"다만 {strong_str} 기운이 조금 강하게 작용하니, 상극 오행인 {control_name} 기운의 색과 음식으로 균형을 맞추면 하루가 더욱 순조롭게 흘러갈 거예요."
         )
+        
+        _update_oheng_counter(recommended_oheng_counter, [control_name])
     elif oheng_type == "무형" :
         lacking_str = _get_oheng_string_list(lacking)
         lacking_name1 = lacking[0]
@@ -51,6 +60,9 @@ def define_oheng_messages(lacking: List[str], strong: List[str], oheng_type: str
         control1 = get_counter_oheng(strong1)
         control2 = get_counter_oheng(strong2)
         advice_parts.append(f"과도한 {strong1} 기운과 {strong2} 기운은 상극 오행인 {control1} 기운과 {control2} 기운으로 살짝 눌러 조화를 이루어 보세요.")
+    
+        _update_oheng_counter(recommended_oheng_counter, [lacking_name1])
+        _update_oheng_counter(recommended_oheng_counter, [control1, control2])
     else:
         advice_parts.append(f"오늘은 일부 오행이 과하고 일부는 부족해 기운의 균형이 흐트러져 있습니다.")
         
@@ -64,8 +76,11 @@ def define_oheng_messages(lacking: List[str], strong: List[str], oheng_type: str
         lacking_name2 = lacking[1]
 
         advice_parts.append(f"부족한 {lacking_name1} 기운과 {lacking_name2} 기운을 보충하여 균형을 되찾아보세요.")
-            
+        
+        _update_oheng_counter(recommended_oheng_counter, [control_name])
+        _update_oheng_counter(recommended_oheng_counter, [lacking_name1, lacking_name2])
+        
     # 최종 추천 메시지 문자열 생성: 문장별로 띄어쓰기를 추가하여 자연스럽게 연결
     advice_message = " ".join(advice_parts)
     
-    return analysis_headline, advice_message
+    return analysis_headline, advice_message, dict(recommended_oheng_counter)
