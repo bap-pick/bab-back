@@ -44,3 +44,5 @@ __pycache__/
 *.pyc
 
 .ipynb_checkpoints/
+
+/chroma_data/

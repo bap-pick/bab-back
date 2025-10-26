@@ -224,8 +224,8 @@ def check_restaurant_document(target_id: int):
             print("문서 내용 (Document Content)")
             print(document_content)
                 
-        else:
-            print(f"식당 ID {target_id}에 해당하는 문서를 찾지 못함")
+    else:
+        print(f"식당 ID {target_id}에 해당하는 문서를 찾지 못함")
 
 
 # 컬렉션의 원본 데이터 일부 조회
@@ -271,7 +271,8 @@ def check_all_collections():
         display_raw_collection_data(chroma_client, col_name, limit=50)
         
         
-#if __name__ == "__main__":
+if __name__ == "__main__":
     #restore_restaurant_data(1498)
     #delete_restaurant_data_batch(TARGET_RESTAURANT_IDS)
-    #check_restaurant_document(1498)
+    #check_restaurant_document(14)
+    check_all_collections()
