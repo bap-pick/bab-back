@@ -16,10 +16,34 @@ COLLECTION_NAME_REASONS = "ohaeng_reasons_knowledge_base"
 
 # 임베딩 모델 설정
 EMBEDDING_MODEL_NAME = "nlpai-lab/KURE-v1" 
-embeddings = HuggingFaceEmbeddings(
-    model_name=EMBEDDING_MODEL_NAME,
-    model_kwargs={'device': 'cpu'}
-)
+embeddings: Optional[HuggingFaceEmbeddings] = None 
+
+# ChromaDB 클라이언트 설정
+chroma_client: Optional[chromadb.HttpClient] = None
+
+# 지연 로드(Lazy Load) 방식으로 임베딩 모델 로드
+def get_embeddings() -> HuggingFaceEmbeddings:
+    global embeddings
+    if embeddings is None:
+        embeddings = HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL_NAME,
+            model_kwargs={'device': 'cpu'}
+        )
+    return embeddings
+
+# 지연 로드(Lazy Load) 방식으로 ChromaDB 클라이언트 연결
+def get_chroma_client() -> chromadb.HttpClient:
+    global chroma_client
+    if chroma_client is None:
+        print(f"ChromaDB 클라이언트 연결 시작 ({CHROMA_HOST}:{CHROMA_PORT})...")
+        try:
+            chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+            print("ChromaDB 클라이언트 연결 성공.")
+        except Exception as e:
+            # Render 타임아웃 시 초기화 실패하도록 예외 발생
+            raise RuntimeError(f"ChromaDB 서버 연결 실패: {e}")
+            
+    return chroma_client
 
 # ChromaDB 연결/컬렉션 로드
 def get_chroma_client_and_collection(
@@ -28,20 +52,17 @@ def get_chroma_client_and_collection(
 ) -> tuple[chromadb.HttpClient, Any] | tuple[None, None]:
     try:
         # ChromaDB 클라이언트 연결 - 도커 컨테이너에 접속
-        client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+        client = get_chroma_client()
         
         if use_langchain_chroma:
             # LangChain Chroma 헬퍼 (add_documents 사용 시 필요)
             collection_obj = Chroma(
                 client=client,
                 collection_name=collection_name,
-                embedding_function=embeddings
+                embedding_function=get_embeddings()
             )
         else:
-            # 일반 ChromaDB 컬렉션 객체 (get, delete, count 사용 시 효율적)
-            collection_obj = client.get_collection(name=collection_name)
-            
-        return client, collection_obj
+            return client, client.get_collection(name=collection_name)
             
     except Exception as e:
         print(f"ChromaDB 연결/컬렉션 로드 실패: {e}")
@@ -264,6 +285,7 @@ def check_all_collections():
     COLLECTIONS_TO_CHECK = [
         COLLECTION_NAME_RESTAURANTS,
         COLLECTION_NAME_REASONS,
+        COLLECTION_NAME_OHAENG,
     ]
     
     # 각 컬렉션에 대해 원본 데이터 출력 함수 호출

@@ -19,8 +19,15 @@ from vectordb.vectordb_util import (
 ) 
 
 # LLM API 설정
-client = genai.Client(api_key=GEMMA_API_KEY) 
+client = None
 model_name = "gemma-3-4b-it"
+
+# 지연 로드(Lazy Load) 방식으로 LLM 연결
+def get_llm_client() -> genai.Client:
+    global client
+    if client is None:
+        client = genai.Client(api_key=GEMMA_API_KEY)
+    return client
 
 SYSTEM_PROMPT = """
     당신은 식당의 카테고리, 메뉴를 분석하여 동양 철학의 오행(五行: 木, 火, 土, 金, 水) 중 해당 식당이 가장 강하게 반영하는 상위 3개의 기운을 판별하는 전문가입니다.
@@ -148,6 +155,8 @@ def add_ohang_all_restaurants():
                 for attempt in range(5):
                     try:
                         # LLM API 호출
+                        client = get_llm_client()
+                        
                         response = client.models.generate_content(
                             model=model_name,
                             contents=[

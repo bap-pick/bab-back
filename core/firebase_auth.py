@@ -11,10 +11,9 @@ def verify_firebase_token(authorization: str = Header(...)):
     id_token = authorization.split(" ")[1].strip() # 공백 제거 추가
     
     try:
-        # clock_skew_seconds 인자를 추가하여 5초 허용 오차 추가
         decoded_token = auth.verify_id_token(
             id_token,
-            clock_skew_seconds=5
+            clock_skew_seconds=1
         )
         return decoded_token["uid"]
     
