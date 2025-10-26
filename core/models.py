@@ -2,6 +2,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float, Text, ForeignKey
 from core.db import Base
 from datetime import datetime
+from typing import List, Optional
 
 class User(Base):
     __tablename__ = "Users"
@@ -63,13 +64,18 @@ class Restaurant(Base):
     address = Column(String(200), nullable=False)
     phone = Column(String(20), nullable=True)
     
-    # 식당의 상위 오행 3개를 저장합니다. (예: 木, 火, 土)
+    # 식당의 상위 오행 3개를 저장
     top_ohaeng_1 = Column(String(10), nullable=True)
     top_ohaeng_2 = Column(String(10), nullable=True)
     top_ohaeng_3 = Column(String(10), nullable=True)
     
-    # Menu 모델과 연결: Restaurant 객체에서 rest.menus로 메뉴 리스트를 가져오기 위함
     menus = relationship("Menu", back_populates="restaurant")
+    hours = relationship("OpeningHour", back_populates="restaurant")
+    facility_associations = relationship("RestaurantFacility", back_populates="restaurant")
+    
+    @property
+    def facilities(self) -> List["Facility"]:
+        return [assoc.facility for assoc in self.facility_associations]
 
     def __repr__(self):
         return f"<Restaurant(id={self.id}, name='{self.name}', category='{self.category}')>"
@@ -86,3 +92,44 @@ class Menu(Base):
     
     def __repr__(self):
         return f"<Menu(id={self.id}, menu_name='{self.menu_name}', restaurant_id={self.restaurant_id})>"
+    
+class OpeningHour(Base):
+    __tablename__ = "OpeningHours"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    day = Column(String(10), nullable=True)
+    open_time = Column(Time, nullable=True)
+    close_time = Column(Time, nullable=True)
+    break_start = Column(Time, nullable=True)
+    break_end = Column(Time, nullable=True)
+    last_order = Column(Time, nullable=True)
+    is_closed = Column(Boolean, default=False)
+    restaurant_id = Column(Integer, ForeignKey('Restaurants.id'), nullable=False)
+    
+    restaurant = relationship("Restaurant", back_populates="hours")
+    
+    def __repr__(self):
+        return f"<OpeningHour(id={self.id}, day='{self.day}', restaurant_id={self.restaurant_id})>"
+
+class RestaurantFacility(Base):
+    __tablename__ = "RestaurantFacilities"
+    
+    restaurant_id = Column(Integer, ForeignKey("Restaurants.id"), primary_key=True)
+    facility_id = Column(Integer, ForeignKey("Facilities.id"), primary_key=True)
+
+    restaurant = relationship("Restaurant", back_populates="facility_associations")
+    facility = relationship("Facility", back_populates="restaurants")
+
+    def __repr__(self):
+        return f"<RestaurantFacility(r_id={self.restaurant_id}, f_id={self.facility_id})>"
+
+class Facility(Base):
+    __tablename__ = "Facilities"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    name = Column(String(100), nullable=True, unique=True)
+    
+    restaurants = relationship("RestaurantFacility", back_populates="facility")
+
+    def __repr__(self):
+        return f"<Facility(id={self.id}, name='{self.name}')>"
