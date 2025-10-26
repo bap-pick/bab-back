@@ -13,7 +13,7 @@ def verify_firebase_token(authorization: str = Header(...)):
     try:
         decoded_token = auth.verify_id_token(
             id_token,
-            clock_skew_seconds=1
+            clock_skew_seconds=5
         )
         return decoded_token["uid"]
     
