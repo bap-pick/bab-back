@@ -1,8 +1,8 @@
 from firebase_admin import auth
 from fastapi import HTTPException, Header
-import logging # 로깅 모듈 추가
+import logging
 
-logger = logging.getLogger(__name__) # 로거 설정
+logger = logging.getLogger(__name__)
 
 def verify_firebase_token(authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
@@ -11,7 +11,11 @@ def verify_firebase_token(authorization: str = Header(...)):
     id_token = authorization.split(" ")[1].strip() # 공백 제거 추가
     
     try:
-        decoded_token = auth.verify_id_token(id_token)
+        # clock_skew_seconds 인자를 추가하여 5초 허용 오차 추가
+        decoded_token = auth.verify_id_token(
+            id_token,
+            clock_skew_seconds=5
+        )
         return decoded_token["uid"]
     
     except Exception as e:
