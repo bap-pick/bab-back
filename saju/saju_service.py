@@ -3,7 +3,7 @@ from datetime import date, time, timedelta, datetime
 from typing import Optional, Dict
 from sqlalchemy import desc
 from fastapi import HTTPException
-
+from starlette.concurrency import run_in_threadpool
 from core.models import User, Manse 
 from saju.saju_calculator import get_time_pillar, calculate_oheng_score
 from saju.saju_data import get_ten_star, get_jijangan, get_five_circle_from_char
@@ -81,7 +81,14 @@ async def calculate_saju_and_save(
         raise HTTPException(status_code=400, detail="사주 계산에 필요한 생년월일 정보가 부족합니다.")
     
     # 1. 만세력 데이터 조회 및 보정 (삼주 확보)
-    manse_record = _get_manse_record(db, birth_date, birth_time, birth_calendar)
+    #manse_record = _get_manse_record(db, birth_date, birth_time, birth_calendar)
+    manse_record = await run_in_threadpool(
+        _get_manse_record, 
+        db, 
+        user.birth_date, 
+        user.birth_time, 
+        user.birth_calendar
+    )
     
     if not manse_record:
         raise HTTPException(status_code=404, detail="만세력 데이터베이스에서 해당 기록을 찾을 수 없어 사주 계산을 완료할 수 없습니다.")
@@ -110,8 +117,10 @@ async def calculate_saju_and_save(
     
     user.day_sky = saju_pillars['day_sky']  # 사용자 사주 일간 필드 추가
     
-    db.commit()
-    db.refresh(user)
+    #db.commit()
+    #db.refresh(user)
+    await run_in_threadpool(db.commit)
+    await run_in_threadpool(db.refresh, user)
     
     return oheng_percentages
 
@@ -146,10 +155,11 @@ async def calculate_today_saju_iljin(
     # Users 테이블에 day_sky만 없는 경우
     if not user_day_sky: 
         try:
-            day_pillar = _get_user_day_pillar(db, user) 
+            #day_pillar = _get_user_day_pillar(db, user) 
+            day_pillar = await run_in_threadpool(_get_user_day_pillar, db, user)
             user.day_sky = day_pillar['day_sky'] 
-            db.commit()
-            db.refresh(user)
+            await run_in_threadpool(db.commit)
+            await run_in_threadpool(db.refresh, user)
             user_day_sky = user.day_sky 
         except HTTPException:
             raise 
@@ -162,14 +172,17 @@ async def calculate_today_saju_iljin(
     if all(getattr(user, f) is None for f in oheng_fields):
         try:
             await calculate_saju_and_save(user, db)
-            db.refresh(user)
+            await run_in_threadpool(db.refresh, user)
         except Exception as e:
             db.rollback()
             raise HTTPException(status_code=500, detail=f"사용자 오행 데이터 계산 실패: {e}")
 
     # 1: 일진 - 오늘의 간지 데이터 가져오기
     today_date = date.today()
-    today_manse = db.query(Manse).filter(Manse.solarDate == today_date).first() 
+    #today_manse = db.query(Manse).filter(Manse.solarDate == today_date).first() 
+    today_manse = await run_in_threadpool(
+        lambda: db.query(Manse).filter(Manse.solarDate == today_date).first()
+    )
     
     if not today_manse or not user_day_sky:
         raise HTTPException(status_code=404, detail="계산에 필요한 유저 정보 혹은 일진 데이터가 부족함")
