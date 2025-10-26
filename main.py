@@ -8,8 +8,7 @@ import os
 from dotenv import load_dotenv
 from api import auth, users, chat, saju, restaurants
 from core.s3 import initialize_s3_client
-from vectordb.vectordb_util import get_embeddings, get_chroma_client 
-from vectordb.add_restaurant_to_ohaeng import get_llm_client
+import uvicorn
 
 load_dotenv(override=True) 
 
@@ -54,22 +53,13 @@ def initialize_s3_sync():
         print(s3_client_info)
     else:
         print("S3 클라이언트 초기화 실패")
-
-def initialize_ai_components_sync():
-    # 지연 로드 함수들을 호출하여 최초 초기화 실행
-    get_chroma_client()
-    get_embeddings()
-    get_llm_client()
-    
-    print("chroma, 임베딩 모델, llm 초기화 완료")
     
 @app.on_event("startup")
 async def startup_event():
     try:
         await asyncio.gather(
             asyncio.to_thread(initialize_firebase_sync),
-            asyncio.to_thread(initialize_s3_sync),
-            asyncio.to_thread(initialize_ai_components_sync) 
+            asyncio.to_thread(initialize_s3_sync) 
         )
     except Exception as e:
         print(f"초기화 중 오류 발생: {e}")
@@ -100,3 +90,14 @@ app.include_router(restaurants.router)
 # Static 파일
 os.makedirs("static/profile_images", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    
+    # Uvicorn 실행
+    uvicorn.run(
+        "main:app", 
+        host="0.0.0.0", 
+        port=port, 
+        reload=False
+    )
