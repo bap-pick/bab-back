@@ -5,10 +5,11 @@ from core.firebase_auth import verify_firebase_token # Firebase ID 토큰 검증
 from core.db import get_db # DB 세션 의존성
 from core.models import User # SQLAlchemy User 모델
 
-from typing import Dict
+from typing import Dict, Tuple, List, Any
 from saju.oheng_analyzer import classify_and_determine_recommendation 
 from saju.message_generator import define_oheng_messages
 from saju.saju_service import calculate_today_saju_iljin
+from saju.restaurant_recommender import get_top_restaurants_by_oheng
 
 router = APIRouter(prefix="/saju")
 
@@ -31,26 +32,19 @@ def get_user_oheng_scores(db: Session, user_id: str) -> Dict[str, float]:
         "금(金)": user.oheng_metal,
         "수(水)": user.oheng_water,
     }
-
-# 사용자의 사주 오행 비율 분석 결과 반환
-@router.get("/analyze")
-async def get_personalized_recommendation(
-    uid: str = Depends(verify_firebase_token),
-    db: Session = Depends(get_db)
-):
-    # 1. 사용자 조회
+    
+# 오행 분석 결과 추출
+async def _get_oheng_analysis_data(uid: str, db: Session) -> Tuple[List[str], List[str], str, Dict[str, float]]:
     user = db.query(User).filter(User.firebase_uid == uid).first()
     
     if not user:
         raise HTTPException(status_code=404, detail="등록된 사용자를 찾을 수 없습니다.")
 
-    # 2. 오늘의 일진 기반 오행 비율 계산
+    # 1. 오늘의 일진 기반 오행 비율 계산
     try:
-        # 오늘의 일진에 따라 보정된 오행 비율을 가져오기
         iljin_data = await calculate_today_saju_iljin(user, db)
-        oheng_scores_english = iljin_data["today_oheng_percentages"] # 영문 키: ohengWood, ohengFire 등
+        oheng_scores_english = iljin_data["today_oheng_percentages"]
         
-        # 영문 키를 한글 키로 변환하는 맵핑
         oheng_scores_korean = {
             "목(木)": oheng_scores_english.get("ohengWood", 0.0),
             "화(火)": oheng_scores_english.get("ohengFire", 0.0),
@@ -59,23 +53,31 @@ async def get_personalized_recommendation(
             "수(水)": oheng_scores_english.get("ohengWater", 0.0),
         }
 
-    except HTTPException as e:
-        raise e
     except Exception as e:
-        # 기타 오류 처리
         print(f"Error calculating today's saju for {uid}: {e}")
         raise HTTPException(status_code=500, detail="간지 기반 오행 데이터를 가져오는 데 실패했습니다.")
         
-    # 3. 오행 비율 유형 분류 함수 실행 (오늘의 간지에 따라 보정된 오행 비율 사용)
+    # 2. 오행 비율 유형 분류
     analysis_result = classify_and_determine_recommendation(oheng_scores_korean)
 
-    # 3-1. 함수 실행 결과: 오행 유형, 부족 오행, 과다 오행
     oheng_type = analysis_result["oheng_type"]
     lacking_oheng = analysis_result["primary_supplement_oheng"]
     strong_oheng = analysis_result["secondary_control_oheng"]
+    
+    return lacking_oheng, strong_oheng, oheng_type, oheng_scores_korean
 
-    # 4. 규칙 기반 메시지 생성
-    headline, advice = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)
+
+# 사용자의 사주 오행 비율 분석 결과 반환
+@router.get("/analyze")
+async def get_personalized_recommendation(
+    uid: str = Depends(verify_firebase_token),
+    db: Session = Depends(get_db)
+):
+    # 1-3. 오행 분석 결과를 헬퍼 함수로 가져옴
+    lacking_oheng, strong_oheng, oheng_type, oheng_scores_korean = await _get_oheng_analysis_data(uid, db)
+
+    # 4. 규칙 기반 메시지 생성 및 추천 오행 가중치 추출
+    headline, advice, recommended_ohengs_weights = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)
     
     # 5. 최종 결과 반환
     return {
@@ -86,5 +88,33 @@ async def get_personalized_recommendation(
         "recommendation_advice": advice, 
         "supplement_oheng": lacking_oheng, 
         "control_oheng": strong_oheng, 
-        "recommended_restaurants": []
+        "recommended_ohengs_weights": recommended_ohengs_weights, # 가중치 딕셔너리 반환
+        "recommended_restaurants": [] 
+    }
+
+# 오행 맞춤 식당 추천 결과 반환
+@router.get("/restaurants")
+async def get_recommended_restaurants(
+    uid: str = Depends(verify_firebase_token),
+    db: Session = Depends(get_db),
+    top_k: int = 5 
+):
+    # 1. 오행 분석 결과를 헬퍼 함수로 가져옴
+    lacking_oheng, strong_oheng, oheng_type, _ = await _get_oheng_analysis_data(uid, db)
+
+    # 2. 추천 오행 가중치 딕셔너리를 추출
+    _, _, recommended_ohengs_weights = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)
+
+    print(f"보충 오행 가중치 딕셔너리: {recommended_ohengs_weights}\n")
+    
+    # 3. 식당 검색 서비스 호출
+    recommended_restaurants = get_top_restaurants_by_oheng(
+        oheng_weights=recommended_ohengs_weights,
+        top_k=top_k
+    )
+
+    # 4. 최종 결과 반환
+    return {
+        "recommended_ohengs_weights_used": recommended_ohengs_weights,
+        "restaurants": recommended_restaurants
     }
