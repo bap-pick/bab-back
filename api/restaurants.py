@@ -38,6 +38,15 @@ class FacilityBase(BaseModel):
     class Config:
         from_attributes = True
 
+class ReviewBase(BaseModel):
+    id: int
+    rating: Optional[float] = None
+    visitor_reviews: int
+    blog_reviews: int
+
+    class Config:
+        from_attributes = True
+        
 class RestaurantDetail(BaseModel):
     id: int
     name: str
@@ -47,7 +56,8 @@ class RestaurantDetail(BaseModel):
     
     menus: List[MenuBase] 
     hours: List[OpeningHourBase]
-    facilities: List[FacilityBase] 
+    facilities: List[FacilityBase]
+    reviews: List[ReviewBase]
 
     class Config:
         from_attributes = True
@@ -66,8 +76,9 @@ def get_restaurant_detail(
     # 1. ID를 기반으로 식당 정보 조회
     restaurant = db.query(Restaurant).options(
         joinedload(Restaurant.menus),            
-        joinedload(Restaurant.hours),            
-        joinedload(Restaurant.facility_associations).joinedload(RestaurantFacility.facility)
+        joinedload(Restaurant.hours),
+        joinedload(Restaurant.reviews),         
+        joinedload(Restaurant.facility_associations).joinedload(RestaurantFacility.facility),
     ).filter(Restaurant.id == restaurant_id).first()
     
     # 2. 결과 처리
@@ -76,5 +87,3 @@ def get_restaurant_detail(
         raise HTTPException(status_code=404, detail=f"Restaurant with ID {restaurant_id} not found")
     
     return restaurant
-  
-  

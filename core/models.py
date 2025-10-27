@@ -1,8 +1,8 @@
 from sqlalchemy.orm import relationship
-from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float, Text, ForeignKey, DECIMAL
 from core.db import Base
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 
 class User(Base):
     __tablename__ = "Users"
@@ -72,6 +72,7 @@ class Restaurant(Base):
     menus = relationship("Menu", back_populates="restaurant")
     hours = relationship("OpeningHour", back_populates="restaurant")
     facility_associations = relationship("RestaurantFacility", back_populates="restaurant")
+    reviews = relationship("Reviews", back_populates="restaurant")
     
     @property
     def facilities(self) -> List["Facility"]:
@@ -133,3 +134,18 @@ class Facility(Base):
 
     def __repr__(self):
         return f"<Facility(id={self.id}, name='{self.name}')>"
+    
+class Reviews(Base):
+    __tablename__ = "Reviews"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    rating = Column(DECIMAL(3, 1), nullable=True) 
+    visitor_reviews = Column(Integer, nullable=True, default=0)
+    blog_reviews = Column(Integer, nullable=True, default=0)
+    
+    restaurant_id = Column(Integer, ForeignKey('Restaurants.id'), nullable=False)
+    
+    restaurant = relationship("Restaurant", back_populates="reviews")
+    
+    def __repr__(self):
+        return f"<Reviews(id={self.id}, rating={self.rating}, restaurant_id={self.restaurant_id})>"
