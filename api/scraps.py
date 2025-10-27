@@ -4,7 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel
 from core.db import get_db
 from core.firebase_auth import verify_firebase_token
-from core.models import User, Scrap
+from core.models import User, Scrap, Restaurant
 
 router = APIRouter(prefix="/scraps")
 
@@ -45,6 +45,29 @@ def create_scrap(
         }
     }
 
+# 스크랩 목록 조회: 식당의 id, 이름, 카테고리 반환
+@router.get("/me")
+def get_my_scraps(
+    db: Session = Depends(get_db),
+    uid: str = Depends(verify_firebase_token)
+):
+    user = db.query(User).filter(User.firebase_uid == uid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    scraps = db.query(Scrap).filter(Scrap.user_id == user.id).all()
+    restaurant_ids = [scrap.restaurant_id for scrap in scraps]
+    # 식당 정보 조회
+    restaurants = db.query(Restaurant).filter(Restaurant.id.in_(restaurant_ids)).all()
+
+    return [
+        {
+            "id": r.id,
+            "name": r.name,
+            "category": r.category
+        } for r in restaurants
+    ]
+    
 # 스크랩 삭제
 @router.delete("/{restaurant_id}")
 def delete_scrap(
