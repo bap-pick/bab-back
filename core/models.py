@@ -22,6 +22,8 @@ class User(Base):
     oheng_metal = Column(Float, nullable=True)
     oheng_water = Column(Float, nullable=True)
     day_sky = Column(String(10), nullable=True)
+    
+    scraps = relationship("Scrap", back_populates="user")
 
 class ChatRoom(Base):
     __tablename__ = "Chat_rooms"
@@ -73,6 +75,7 @@ class Restaurant(Base):
     hours = relationship("OpeningHour", back_populates="restaurant")
     facility_associations = relationship("RestaurantFacility", back_populates="restaurant")
     reviews = relationship("Reviews", back_populates="restaurant")
+    scraps = relationship("Scrap", back_populates="restaurant")
     
     @property
     def facilities(self) -> List["Facility"]:
@@ -149,3 +152,17 @@ class Reviews(Base):
     
     def __repr__(self):
         return f"<Reviews(id={self.id}, rating={self.rating}, restaurant_id={self.restaurant_id})>"
+
+class Scrap(Base):
+    __tablename__ = "Scraps"
+
+    user_id = Column(Integer, ForeignKey('Users.id'), primary_key=True, nullable=False)
+    restaurant_id = Column(Integer, ForeignKey('Restaurants.id'), primary_key=True, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="scraps")
+    restaurant = relationship("Restaurant", back_populates="scraps")
+
+    def __repr__(self):
+        return f"<Scrap(user_id={self.user_id}, restaurant_id={self.restaurant_id})>" 
+    

@@ -6,7 +6,7 @@ import firebase_admin
 from firebase_admin import credentials
 import os
 from dotenv import load_dotenv
-from api import auth, users, chat, saju, restaurants
+from api import auth, users, chat, saju, restaurants, scraps
 from core.s3 import initialize_s3_client
 import uvicorn
 
@@ -86,6 +86,7 @@ app.include_router(users.router)
 app.include_router(chat.router)
 app.include_router(saju.router)
 app.include_router(restaurants.router)
+app.include_router(scraps.router)
 
 # Static 파일
 os.makedirs("static/profile_images", exist_ok=True)
