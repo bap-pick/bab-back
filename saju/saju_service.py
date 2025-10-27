@@ -190,7 +190,6 @@ async def calculate_today_saju_iljin(
     today_day_sky = today_manse.daySky      # 오늘의 일간
     today_day_ground = today_manse.dayGround # 오늘의 일지
     
-
     # 2. 십신 계산
     try:
         ten_star_map = get_ten_star() 
