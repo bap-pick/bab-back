@@ -156,8 +156,8 @@ async def calculate_today_saju_iljin(
     if not user_day_sky: 
         try:
             #day_pillar = _get_user_day_pillar(db, user) 
-            day_pillar = await run_in_threadpool(_get_user_day_pillar, db, user)
-            user.day_sky = day_pillar['day_sky'] 
+            day_pillar = await run_in_threadpool(_get_user_day_pillar, db, user) 
+            user.day_sky = day_pillar['day_sky']
             await run_in_threadpool(db.commit)
             await run_in_threadpool(db.refresh, user)
             user_day_sky = user.day_sky 
