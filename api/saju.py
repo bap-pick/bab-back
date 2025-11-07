@@ -7,11 +7,11 @@ from core.models import User # SQLAlchemy User 모델
 
 from typing import Dict, Tuple, List, Any
 from saju.oheng_analyzer import classify_and_determine_recommendation 
-from saju.message_generator import define_oheng_messages
 from saju.saju_service import calculate_today_saju_iljin
 from saju.restaurant_recommender import get_top_restaurants_by_oheng
+from saju.message_generator import define_oheng_messages
 
-router = APIRouter(prefix="/saju")
+router = APIRouter(prefix="/saju", tags=["saju"])
 
 # 사용자의 사주 오행 데이터 가져오기
 def get_user_oheng_scores(db: Session, user_id: str) -> Dict[str, float]:
@@ -59,7 +59,7 @@ async def _get_oheng_analysis_data(uid: str, db: Session) -> Tuple[List[str], Li
         
     # 2. 오행 비율 유형 분류
     analysis_result = classify_and_determine_recommendation(oheng_scores_korean)
-
+    
     oheng_type = analysis_result["oheng_type"]
     lacking_oheng = analysis_result["primary_supplement_oheng"]
     strong_oheng = analysis_result["secondary_control_oheng"]
@@ -73,13 +73,22 @@ async def get_personalized_recommendation(
     uid: str = Depends(verify_firebase_token),
     db: Session = Depends(get_db)
 ):
-    # 1-3. 오행 분석 결과를 헬퍼 함수로 가져옴
+    # 오행 분석 결과를 가져옴
     lacking_oheng, strong_oheng, oheng_type, oheng_scores_korean = await _get_oheng_analysis_data(uid, db)
 
-    # 4. 규칙 기반 메시지 생성 및 추천 오행 가중치 추출
-    headline, advice, recommended_ohengs_weights = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)
+    # 규칙 기반 메시지 및 대상 오행 추출
+    headline, advice, recommended_ohengs_weights, control_ohengs, strong_ohengs = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)    
+
+    # 제어 오행 리스트 중복 제거
+    unique_control_ohengs = list(set(control_ohengs))
     
-    # 5. 최종 결과 반환
+    # 디버깅: 부족 오행, 과다 오행, 제어 오행, 가중치 딕셔너리 출력
+    print(f"부족 오행: {lacking_oheng}")
+    print(f"과다 오행: {strong_ohengs}")
+    print(f"제어 오행 (강한 오행의 상극 오행, 중복 제거): {unique_control_ohengs}")
+    print(f"오행 가중치 딕셔너리: {recommended_ohengs_weights}")
+    
+    # 최종 결과 반환
     return {
         "user_id": uid,
         "oheng_analysis_scores": oheng_scores_korean, 
@@ -99,15 +108,13 @@ async def get_recommended_restaurants(
     db: Session = Depends(get_db),
     top_k: int = 5 
 ):
-    # 1. 오행 분석 결과를 헬퍼 함수로 가져옴
+    # 오행 분석 결과를 가져옴
     lacking_oheng, strong_oheng, oheng_type, _ = await _get_oheng_analysis_data(uid, db)
-
-    # 2. 추천 오행 가중치 딕셔너리를 추출
-    _, _, recommended_ohengs_weights = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)
-
-    print(f"보충 오행 가중치 딕셔너리: {recommended_ohengs_weights}\n")
     
-    # 3. 식당 검색 서비스 호출
+    # 추천 오행 가중치 딕셔너리를 추출
+    _, _, recommended_ohengs_weights, _, _ = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)
+    
+    # 식당 검색 서비스 호출
     recommended_restaurants = get_top_restaurants_by_oheng(
         oheng_weights=recommended_ohengs_weights,
         top_k=top_k
