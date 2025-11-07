@@ -65,6 +65,7 @@ class Restaurant(Base):
     category = Column(String(50), nullable=False)
     address = Column(String(200), nullable=False)
     phone = Column(String(20), nullable=True)
+    image = Column(String(2000), nullable=True) 
     
     # 식당의 상위 오행 3개를 저장
     top_ohaeng_1 = Column(String(10), nullable=True)
@@ -89,6 +90,7 @@ class Menu(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
     menu_name = Column(String(100), nullable=True)
+    menu_price = Column(Integer, nullable=True)
     restaurant_id = Column(Integer, ForeignKey('Restaurants.id'), nullable=False)
     
     # Restaurant 모델과 연결: Menu 객체에서 menu.restaurant로 해당 식당 객체를 가져오기 위함
