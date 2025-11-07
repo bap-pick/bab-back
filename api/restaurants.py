@@ -7,7 +7,7 @@ from core.firebase_auth import verify_firebase_token
 from core.db import get_db
 from core.models import Restaurant, RestaurantFacility
 
-router = APIRouter(prefix="/restaurants")
+router = APIRouter(prefix="/restaurants", tags=["restaurants"])
 
 from pydantic import BaseModel
 from typing import Optional, List
@@ -15,6 +15,7 @@ from typing import Optional, List
 class MenuBase(BaseModel):
     id: int
     menu_name: Optional[str] = None
+    menu_price: Optional[int] = None 
     
     class Config:
         from_attributes = True
@@ -53,6 +54,7 @@ class RestaurantDetail(BaseModel):
     category: str
     address: Optional[str]
     phone: Optional[str]
+    image: Optional[str] = None
     
     menus: List[MenuBase] 
     hours: List[OpeningHourBase]
