@@ -24,6 +24,7 @@ class User(Base):
     day_sky = Column(String(10), nullable=True)
     
     scraps = relationship("Scrap", back_populates="user")
+    chatroom_memberships = relationship("ChatroomMember", back_populates="user")
 
 class ChatRoom(Base):
     __tablename__ = "Chat_rooms"
@@ -31,6 +32,14 @@ class ChatRoom(Base):
     name = Column(String(30), nullable=True)     
     is_group = Column(Boolean, nullable=False, default=False)    
     last_message_id = Column(Integer, nullable=True) 
+    
+    memberships = relationship("ChatroomMember", back_populates="chatroom") # 'chatroom'과 연결
+    latest_message = relationship(
+        "ChatMessage", 
+        primaryjoin="ChatRoom.last_message_id == ChatMessage.id",
+        foreign_keys=[last_message_id],
+        uselist=False
+    )
     
 class ChatMessage(Base):
     __tablename__ = "Chat_messages"
@@ -41,6 +50,20 @@ class ChatMessage(Base):
     content = Column(Text) #내용
     timestamp = Column(DateTime, default=datetime.utcnow) #보낸시간
 
+class ChatroomMember(Base):
+    __tablename__ = "Chatroom_members"
+
+    user_id = Column(Integer, ForeignKey('Users.id'), primary_key=True)
+    chatroom_id = Column(Integer, ForeignKey('Chat_rooms.id'), primary_key=True)
+    role = Column(String(20), nullable=False)
+    joined_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="chatroom_memberships")
+    chatroom = relationship("ChatRoom", back_populates="memberships")
+
+    def __repr__(self):
+        return f"<ChatroomMember(user_id={self.user_id}, chatroom_id={self.chatroom_id}, role='{self.role}')>"
+    
 class Manse(Base):
     __tablename__ = "manses"
 
@@ -167,4 +190,3 @@ class Scrap(Base):
 
     def __repr__(self):
         return f"<Scrap(user_id={self.user_id}, restaurant_id={self.restaurant_id})>" 
-    
