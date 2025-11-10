@@ -1,14 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Depends
 from sqlalchemy.orm import Session
 
-from core.firebase_auth import verify_firebase_token # Firebase ID 토큰 검증
-from core.db import get_db # DB 세션 의존성
-from core.models import User # SQLAlchemy User 모델
+from core.firebase_auth import verify_firebase_token
+from core.db import get_db
+from core.models import User
 
-from typing import Dict, Tuple, List, Any
+from typing import Dict, Tuple, List
 from saju.oheng_analyzer import classify_and_determine_recommendation 
 from saju.saju_service import calculate_today_saju_iljin
-from saju.restaurant_recommender import get_top_restaurants_by_oheng
 from saju.message_generator import define_oheng_messages
 
 router = APIRouter(prefix="/saju", tags=["saju"])
@@ -99,29 +98,4 @@ async def get_personalized_recommendation(
         "control_oheng": strong_oheng, 
         "recommended_ohengs_weights": recommended_ohengs_weights, # 가중치 딕셔너리 반환
         "recommended_restaurants": [] 
-    }
-
-# 오행 맞춤 식당 추천 결과 반환
-@router.get("/restaurants")
-async def get_recommended_restaurants(
-    uid: str = Depends(verify_firebase_token),
-    db: Session = Depends(get_db),
-    top_k: int = 5 
-):
-    # 오행 분석 결과를 가져옴
-    lacking_oheng, strong_oheng, oheng_type, _ = await _get_oheng_analysis_data(uid, db)
-    
-    # 추천 오행 가중치 딕셔너리를 추출
-    _, _, recommended_ohengs_weights, _, _ = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)
-    
-    # 식당 검색 서비스 호출
-    recommended_restaurants = get_top_restaurants_by_oheng(
-        oheng_weights=recommended_ohengs_weights,
-        top_k=top_k
-    )
-
-    # 4. 최종 결과 반환
-    return {
-        "recommended_ohengs_weights_used": recommended_ohengs_weights,
-        "restaurants": recommended_restaurants
     }
