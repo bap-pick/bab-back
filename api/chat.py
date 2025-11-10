@@ -5,14 +5,18 @@ from core.db import get_db
 from core.models import ChatRoom, ChatMessage, ChatroomMember, User
 from core.firebase_auth import verify_firebase_token
 import datetime
+<<<<<<< HEAD
 from typing import Optional, List
 from google import genai
 from google.genai import types
 from core.config import GEMMA_API_KEY
 import pytz
+=======
+from typing import Optional
+>>>>>>> 5b61414 (채팅 초기 메세지 설정 및 llm 프롬프트 튜닝)
 
-client = genai.Client(api_key=GEMMA_API_KEY) 
-model_name = "gemma-3-4b-it"
+from .chain import build_conversation_history, generate_llm_response,get_initial_chat_message
+
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -31,7 +35,8 @@ class ChatRoomCreateRequest(BaseModel):
 
 Chat_rooms = {}
 
-# ---------------- 채팅방 생성 ----------------
+
+# 채팅방 생성 
 @router.post("/create")
 async def create_chatroom(
     data: ChatRoomCreateRequest,
@@ -49,6 +54,7 @@ async def create_chatroom(
     db.commit()
     db.refresh(chatroom) # DB에서 자동 생성된 chatroom.id를 가져옴
 
+<<<<<<< HEAD
     # Chatroom_members 테이블에 저장 (유저 id와 채팅방 id)
     chatroom_member = ChatroomMember(
         user_id=user.id,
@@ -58,13 +64,20 @@ async def create_chatroom(
     )
     db.add(chatroom_member)
     db.commit() # ChatroomMember 저장
+=======
+    #  초기 메시지 생성
+    system_message = await get_initial_chat_message(uid, db)
+    db.add(ChatMessage(room_id=chatroom.id, role="system", content=system_message, sender_id="system"))
+    db.commit()
+>>>>>>> 5b61414 (채팅 초기 메세지 설정 및 llm 프롬프트 튜닝)
     
     room_id_str = str(chatroom.id)
     Chat_rooms[room_id_str] = []
     
-    return {"message": "채팅방 생성 완료", "chatroom_id": room_id_str}
+    return {"message": "채팅방 생성 완료", "chatroom_id": room_id_str, "initial_message": system_message}
 
-# ---------------- 채팅방 목록 조회 ----------------
+
+# 채팅방 목록 조회 
 @router.get("/list")
 async def list_chatrooms(
     uid: str = Depends(verify_firebase_token),
@@ -129,7 +142,8 @@ async def list_chatrooms(
         
     return result
 
-# ---------------- 채팅방 삭제 ----------------
+
+#  채팅방 삭제 
 @router.delete("/{room_id}")
 async def delete_chatroom(
     room_id: int,
@@ -154,6 +168,7 @@ async def delete_chatroom(
         del Chat_rooms[room_key]
     return {"message": "삭제 완료"}
 
+<<<<<<< HEAD
 # ---------------- 특정 채팅방의 메시지 조회 ----------------
 @router.get("/messages/{room_id}", response_model=List[dict])
 async def get_messages(
@@ -197,6 +212,10 @@ async def get_messages(
     return result
 
 # ---------------- 메시지 전송 ----------------
+=======
+
+#  메시지 전송 
+>>>>>>> 5b61414 (채팅 초기 메세지 설정 및 llm 프롬프트 튜닝)
 @router.post("/send")
 async def send_message(
     request: MessageRequest,
@@ -224,21 +243,15 @@ async def send_message(
     db.add(chat_message)
     db.commit()
     db.refresh(chat_message)
-
-    # LLM 클라우드 API 호출
+    
+    # LLM 로직
     try:
-        response = client.models.generate_content(
-            model=model_name,
-            contents=[request.message],
-            config=types.GenerateContentConfig(temperature=0)
-        )
-        
-        assistant_reply = response.text.strip() if response.text else "응답 없음"
-
+        conversation_history = build_conversation_history(db, chatroom.id)
+        assistant_reply = generate_llm_response(conversation_history, request.message)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"LLM API 호출 실패: {e}")
+        raise HTTPException(status_code=500, detail=f"LLM 처리 중 오류: {e}")
 
-    # AI 답변 DB 저장
+    # AI 응답 저장
     assistant_message = ChatMessage(
         room_id=chatroom.id,
         sender_id="assistant",
@@ -260,3 +273,6 @@ async def send_message(
         "reply": {"role": "assistant", "content": assistant_reply},
         "user_message_id": chat_message.id
     }
+    
+
+    
