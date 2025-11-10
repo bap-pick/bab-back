@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from core.db import get_db
@@ -129,30 +129,41 @@ async def list_chatrooms(
         
     return result
 
-# ---------------- 채팅방 삭제 ----------------
 @router.delete("/{room_id}")
 async def delete_chatroom(
     room_id: int,
     uid: str = Depends(verify_firebase_token),
     db: Session = Depends(get_db)
 ):
-    # DB에서 사용자 조회 및 검증
+    # 1. DB에서 사용자 조회 및 검증
     user = db.query(User).filter(User.firebase_uid == uid).first()
     if not user:
-        raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="등록되지 않은 사용자입니다.")
     
-    # DB에서 채팅방 조회
+    # 2. DB에서 ChatRoom 조회
     room = db.query(ChatRoom).filter(ChatRoom.id == room_id).first()
     if not room:
-        raise HTTPException(status_code=404, detail="채팅방을 찾을 수 없음")
+        # 채팅방이 이미 삭제되었거나 존재하지 않는 경우
+        return {"message": "채팅방을 찾을 수 없습니다. 이미 삭제되었을 수 있습니다."} 
+        
+    # 사용자가 해당 방의 멤버인지 확인
+    member = db.query(ChatroomMember).filter(
+        ChatroomMember.chatroom_id == room_id,
+        ChatroomMember.user_id == user.id 
+    ).first()
+    if not member:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="이 채팅방을 삭제할 권한이 없습니다.")
 
-    db.delete(room)
-    db.commit()
+    try:
+        # 3. 채팅방 삭제
+        db.delete(room)         
+        db.commit()
 
-    room_key = str(room_id)
-    if room_key in Chat_rooms:
-        del Chat_rooms[room_key]
-    return {"message": "삭제 완료"}
+    except Exception as e:
+        db.rollback() 
+        print(f"채팅방 삭제 중 오류 발생: {e}")
+
+    return {"message": "채팅방 삭제 완료"}
 
 # ---------------- 특정 채팅방의 메시지 조회 ----------------
 @router.get("/messages/{room_id}", response_model=List[dict])
