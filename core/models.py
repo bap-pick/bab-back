@@ -33,33 +33,35 @@ class ChatRoom(Base):
     is_group = Column(Boolean, nullable=False, default=False)    
     last_message_id = Column(Integer, nullable=True) 
     
-    memberships = relationship("ChatroomMember", back_populates="chatroom") # 'chatroom'과 연결
+    memberships = relationship("ChatroomMember", cascade="all, delete-orphan")
+    messages = relationship("ChatMessage", back_populates="chatroom", passive_deletes=True)
     latest_message = relationship(
         "ChatMessage", 
         primaryjoin="ChatRoom.last_message_id == ChatMessage.id",
         foreign_keys=[last_message_id],
-        uselist=False
+        uselist=False,
     )
-    
+
 class ChatMessage(Base):
     __tablename__ = "Chat_messages"
     id = Column(Integer, primary_key=True) #메세지 고유 id
-    room_id = Column(Integer)   # 채팅방 id..chat_rooms.id
+    room_id = Column(Integer, ForeignKey("Chat_rooms.id", ondelete="CASCADE"), index=True, nullable=False)
     sender_id = Column(String) # 메세지 보낸사람
     role = Column(String) # 유저인지 ai 인지
     content = Column(Text) #내용
     timestamp = Column(DateTime, default=datetime.utcnow) #보낸시간
 
+    chatroom = relationship("ChatRoom", back_populates="messages")
+
 class ChatroomMember(Base):
     __tablename__ = "Chatroom_members"
 
     user_id = Column(Integer, ForeignKey('Users.id'), primary_key=True)
-    chatroom_id = Column(Integer, ForeignKey('Chat_rooms.id'), primary_key=True)
+    chatroom_id = Column(Integer, ForeignKey("Chat_rooms.id", ondelete="CASCADE"), primary_key=True)
     role = Column(String(20), nullable=False)
     joined_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     user = relationship("User", back_populates="chatroom_memberships")
-    chatroom = relationship("ChatRoom", back_populates="memberships")
 
     def __repr__(self):
         return f"<ChatroomMember(user_id={self.user_id}, chatroom_id={self.chatroom_id}, role='{self.role}')>"
