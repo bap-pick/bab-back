@@ -15,7 +15,7 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 KST = pytz.timezone('Asia/Seoul') 
 UTC = pytz.timezone('UTC')
 
-# ---------------- 요청 모델 ----------------
+# 요청 모델
 class MessageRequest(BaseModel):
     room_id: int
     message: str
@@ -56,14 +56,26 @@ async def create_chatroom(
     db.commit() # ChatroomMember 저장
     
     #  초기 메시지 생성
-    system_message = await get_initial_chat_message(uid, db)
-    db.add(ChatMessage(room_id=chatroom.id, role="system", content=system_message, sender_id="system"))
+    assistant_message_content = await get_initial_chat_message(uid, db)
+    initial_chat_message = ChatMessage(
+        room_id=chatroom.id, 
+        role="assistant", 
+        content=assistant_message_content,
+        sender_id="assistant"
+    )
+    
+    db.add(initial_chat_message)
     db.commit()
     
+    db.refresh(initial_chat_message)
+    chatroom.last_message_id = initial_chat_message.id
+    db.add(chatroom)
+    db.commit()
+
     room_id_str = str(chatroom.id)
     Chat_rooms[room_id_str] = []
     
-    return {"message": "채팅방 생성 완료", "chatroom_id": room_id_str, "initial_message": system_message}
+    return {"message": "채팅방 생성 완료", "chatroom_id": room_id_str, "initial_message": assistant_message_content}
 
 
 # 채팅방 목록 조회 
@@ -131,6 +143,7 @@ async def list_chatrooms(
         
     return result
 
+
 # 채팅방 삭제 
 @router.delete("/{room_id}")
 async def delete_chatroom(
@@ -169,7 +182,7 @@ async def delete_chatroom(
     return {"message": "채팅방 삭제 완료"}
 
 
-# ---------------- 특정 채팅방의 메시지 조회 ----------------
+# 특정 채팅방의 메시지 조회
 @router.get("/messages/{room_id}", response_model=List[dict])
 async def get_messages(
     room_id: int, 
@@ -212,7 +225,7 @@ async def get_messages(
     return result
 
 
-#  메시지 전송 
+# 메시지 전송 
 @router.post("/send")
 async def send_message(
     request: MessageRequest,
