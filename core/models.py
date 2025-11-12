@@ -91,6 +91,8 @@ class Restaurant(Base):
     address = Column(String(200), nullable=False)
     phone = Column(String(20), nullable=True)
     image = Column(String(2000), nullable=True) 
+    latitude = Column(Integer, nullable=True)
+    longitude = Column(Integer, nullable=True)
     
     # 식당의 상위 오행 3개를 저장
     top_ohaeng_1 = Column(String(10), nullable=True)

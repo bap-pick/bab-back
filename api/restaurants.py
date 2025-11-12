@@ -1,17 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from datetime import time
+from math import radians, sin, cos, sqrt, atan2
+
+# ⚠️ core.firebase_auth, core.db, core.models 는 프로젝트 구조에 맞게 import 합니다.
 from core.firebase_auth import verify_firebase_token
 from core.db import get_db
 from core.models import Restaurant, RestaurantFacility, Reviews
 
 router = APIRouter(prefix="/restaurants", tags=["restaurants"])
-
-from pydantic import BaseModel
-from typing import Optional, List
 
 class MenuBase(BaseModel):
     id: int
@@ -73,13 +73,16 @@ class RestaurantSummary(BaseModel):
     address: Optional[str]
     image: Optional[str] = None
     
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    
     rating: float = 0.0
     review_count: int = 0
 
     class Config:
         from_attributes = True
-                
-                
+        
+        
 # 식당 상세 정보 및 메뉴 조회 API
 @router.get(
     "/detail/{restaurant_id}",
@@ -92,7 +95,7 @@ def get_restaurant_detail(
 ):
     # 1. ID를 기반으로 식당 정보 조회
     restaurant = db.query(Restaurant).options(
-        joinedload(Restaurant.menus),            
+        joinedload(Restaurant.menus),           
         joinedload(Restaurant.hours),
         joinedload(Restaurant.reviews),         
         joinedload(Restaurant.facility_associations).joinedload(RestaurantFacility.facility),
@@ -105,41 +108,67 @@ def get_restaurant_detail(
     
     return restaurant
 
-# 식당 목록 가져오기 (홈 화면의 식당 캐러셜 카드용 - 일부 정보만)
+# gps 기반 현재 위치 근처 식당 5개 조회 (이미지, 평점, 리뷰 개수, 위도/경도 포함)
 @router.get(
-    "/summaries",
-    response_model=List[RestaurantSummary],
-    dependencies=[Depends(verify_firebase_token)] 
+    "/nearby",
+    dependencies=[Depends(verify_firebase_token)]    
 )
-def get_restaurant_summaries(
-    # 예) /restaurants/summaries?ids=1&ids=5&ids=8
-    ids: List[int] = Query(..., description="조회할 식당 ID 목록"), 
-    db: Session = Depends(get_db),
+def get_nearby_restaurants(
+    lat: float = Query(..., description="현재 위도"),
+    lon: float = Query(..., description="현재 경도"),
+    limit: Optional[int] = Query(None, description="가져올 식당 개수 제한"),
+    db: Session = Depends(get_db)
 ):
-    # 식당 정보 조회: 방문자 리뷰와 블로그 리뷰를 합산해 review_count로 반환
     query = db.query(
         Restaurant,
         Reviews.rating.label('rating'),
         (func.coalesce(Reviews.visitor_reviews, 0) + func.coalesce(Reviews.blog_reviews, 0)).label('review_count')
-    ).outerjoin(Reviews, Restaurant.id == Reviews.restaurant_id).filter(Restaurant.id.in_(ids))
+    ).outerjoin(Reviews, Restaurant.id == Reviews.restaurant_id)
     
     results = query.all()
-    
-    summaries = []
-    for restaurant, rating_value, count_value in results:        
+
+    def haversine(lat1, lon1, lat2, lon2):
+        R = 6371.0  # 지구 반경(km)
+        dlat = radians(lat2 - lat1)
+        dlon = radians(lon2 - lon1)
+        a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return R * c  # 단위: km
+
+    nearby_with_distance = []
+    for restaurant, rating_value, count_value in results:
+        # DB에 위도/경도 데이터가 없는 식당은 제외
+        if restaurant.latitude is None or restaurant.longitude is None:
+            continue
+            
+        distance = haversine(lat, lon, restaurant.latitude, restaurant.longitude)
+        
         final_rating = float(rating_value) if rating_value is not None else 0.0
         final_review_count = count_value if count_value is not None else 0
         
-        # Pydantic 모델(RestaurantSummary)에 데이터를 매핑하여 객체 생성
-        summary = RestaurantSummary(
-            id=restaurant.id,
-            name=restaurant.name,
-            category=restaurant.category,
-            address=restaurant.address,
-            image=restaurant.image,
-            rating=final_rating,
-            review_count=final_review_count
-        )
-        summaries.append(summary)
+        restaurant_data = {
+            "id": restaurant.id,
+            "name": restaurant.name,
+            "category": restaurant.category,
+            "address": restaurant.address,
+            "image": restaurant.image,
+            "latitude": restaurant.latitude, 
+            "longitude": restaurant.longitude,
+            "rating": final_rating,
+            "review_count": final_review_count,
+            "distance_km": round(distance, 2)
+        }
+        
+        nearby_with_distance.append(restaurant_data)
 
-    return summaries
+    # 거리순 정렬
+    nearby_with_distance.sort(key=lambda x: x["distance_km"])
+
+    # limit 지정
+    if limit:
+        nearby_with_distance = nearby_with_distance[:limit]
+
+    return {
+        "count": len(nearby_with_distance),
+        "restaurants": nearby_with_distance
+    }
