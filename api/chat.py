@@ -7,7 +7,8 @@ from core.firebase_auth import verify_firebase_token
 import datetime
 from typing import Optional, List
 import pytz
-from .chain import build_conversation_history, generate_llm_response,get_initial_chat_message
+from .chain import build_conversation_history, generate_llm_response,get_initial_chat_message, search_and_recommend_restaurants, get_latest_recommended_foods
+import re
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -55,20 +56,32 @@ async def create_chatroom(
     db.add(chatroom_member)
     db.commit() # ChatroomMember 저장
     
-    #  초기 메시지 생성
+    # 1. 초기 메시지 생성 및 저장 (Greeting Message)
+    greeting_message_content = "안녕! 나는 오늘의 운세에 맞춰 행운의 맛집을 추천해주는 '밥풀이'야🍀";
+    greeting_message = ChatMessage(
+        room_id=chatroom.id, 
+        role="assistant", 
+        content=greeting_message_content,
+        sender_id="assistant"
+    )
+    db.add(greeting_message)
+    db.commit()
+
+    # 2. 상세 추천 메시지 생성 및 저장
     assistant_message_content = await get_initial_chat_message(uid, db)
-    initial_chat_message = ChatMessage(
+    detailed_message = ChatMessage(
         room_id=chatroom.id, 
         role="assistant", 
         content=assistant_message_content,
         sender_id="assistant"
     )
     
-    db.add(initial_chat_message)
+    db.add(detailed_message)
     db.commit()
     
-    db.refresh(initial_chat_message)
-    chatroom.last_message_id = initial_chat_message.id
+    # last_message_id를 가장 최근 메시지인 상세 추천 메시지의 ID로 설정
+    db.refresh(detailed_message)
+    chatroom.last_message_id = detailed_message.id # 상세 메시지를 마지막 메시지로 설정
     db.add(chatroom)
     db.commit()
 
@@ -256,9 +269,24 @@ async def send_message(
     
     # LLM 로직
     try:
+        # 1) 지난 대화를 LLM에게 전달
         conversation_history = build_conversation_history(db, chatroom.id)
-        assistant_reply = generate_llm_response(conversation_history, request.message)
         
+        # 2) 현재 음식 추천 목록 전달        
+        current_foods = get_latest_recommended_foods(db, chatroom.id)
+        
+        # 3) LLM 호출
+        llm_output = generate_llm_response(conversation_history, request.message, current_recommended_foods=current_foods)
+        assistant_reply = llm_output 
+        
+        # 4) LLM 응답에 MENU_SELECTED 태그가 있는 경우 사용자가 음식을 선택한 것으로 간주
+        menu_match = re.search(r"\[MENU_SELECTED:(.+?)\]", llm_output.strip())
+
+        if menu_match:
+            selected_menu = menu_match.group(1).strip()
+            # 식당 유사도 검색 함수 호출 및 최종 응답으로 설정
+            assistant_reply = search_and_recommend_restaurants(selected_menu, db)
+            
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"LLM 처리 중 오류: {e}")
 
@@ -274,7 +302,7 @@ async def send_message(
     db.commit()
     db.refresh(assistant_message)
 
-    # Chat_rooms 테이블의 last_message_id에 ai 답변의 id를 추가
+    # Chat_rooms 테이블의 last_message_id에 llm 답변의 id를 추가
     chatroom.last_message_id = assistant_message.id 
     db.add(chatroom)
     db.commit()
@@ -284,6 +312,3 @@ async def send_message(
         "reply": {"role": "assistant", "content": assistant_reply},
         "user_message_id": chat_message.id
     }
-    
-
-    

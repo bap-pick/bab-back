@@ -8,6 +8,8 @@ from saju.message_generator import define_oheng_messages
 from typing import List
 import random 
 import re 
+from vectordb.vectordb_util import get_embeddings, get_chroma_client, COLLECTION_NAME_RESTAURANTS
+from langchain_chroma import Chroma
 
 client = genai.Client(api_key=GEMMA_API_KEY)
 model_name = "gemma-3-4b-it"
@@ -17,8 +19,8 @@ OHAENG_FOOD_LISTS = {
     '목(木)': [
         "미네스트로네", "토마토파스타", "케밥", "또르띠야", "고추잡채", "시저샐러드", 
         "청경채볶음", "비빔밥", "치아씨푸딩", "시푸드샐러드", "루꼴라피자", "스무디볼", 
-        "아보카도샐러드", "요거트볼", "그릭샐러드", "오트밀", "그래놀라", "연어샐러드", 
-        "야채김밥", "시금치리조또"
+        "아보카도샐러드", "요거트볼", "그릭요거트", "오트밀", "그래놀라", "시금치", "바질파스타",
+        "바질리조또", "샐러드", "월남쌈"
     ],
     '화(火)': [
         "로스트치킨", "국물떡볶이", "페퍼로니피자", "고추짬뽕", "미트볼", "사천닭날개", 
@@ -125,7 +127,6 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
     
     elif strong_oheng and unique_control_oheng:
         # 겹치지 않는 경우
-        
         control_food_parts = []
         for oheng in unique_control_oheng: 
             foods = get_food_recommendations_for_ohaeng(oheng)
@@ -141,11 +142,10 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
         )
 
     # 3. 최종 메시지 조합
-    final_message = lacking_advice + control_advice
+    final_message = lacking_advice + control_advice + " 여기서 먹고 싶은 메뉴 하나 고르면 식당까지 바로 추천해줄게!"
     return final_message
 
-
-# 첫 메시지 생성
+# 첫 메시지 생성 - 오행 기반 상세 메시지만
 async def get_initial_chat_message(uid: str, db: Session) -> str:
     # 사주 데이터 불러오기
     lacking_oheng, strong_oheng_db, oheng_type, oheng_scores = await _get_oheng_analysis_data(uid, db)
@@ -153,18 +153,13 @@ async def get_initial_chat_message(uid: str, db: Session) -> str:
     # 메시지 생성 로직 (strong_ohengs 정보를 가져옴)
     headline, advice, recommended_ohengs_weights, control_ohengs, strong_ohengs = define_oheng_messages(lacking_oheng, strong_oheng_db, oheng_type)
     
-    detailed_advice = generate_concise_advice(
+    initial_message = generate_concise_advice(
         lacking_oheng=lacking_oheng, 
         strong_oheng=strong_ohengs, 
         control_oheng=control_ohengs 
     )
     
-    # 첫 메시지 완성
-    first_message = (
-        "안녕! 나는 오늘의 운세에 맞춰 행운의 맛집을 추천해주는 '밥풀이'야🍀\n\n"
-        f"{detailed_advice}"
-    )
-    return first_message
+    return initial_message
 
 MAX_MESSAGES = 10  # 최근 대화 10개만 기억
 
@@ -185,32 +180,186 @@ def build_conversation_history(db: Session, chatroom_id: int) -> str:
         conversation_history += f"{msg.content}\n"
     return conversation_history
 
+# 최근 메시지에서 추천한 메뉴 목록 반환
+def get_latest_recommended_foods(db: Session, chatroom_id: int) -> List[str]:
+    latest_bot_messages = (
+        db.query(ChatMessage) 
+        .filter(ChatMessage.room_id == chatroom_id, ChatMessage.role == "assistant")
+        .order_by(ChatMessage.timestamp.desc())
+        .limit(5)
+        .all()
+    )
+
+    # 규칙 2 패턴: '그러면 [음식명1], [음식명2], [음식명3] 중 하나는 어때?'
+    pattern_rule2 = re.compile(r"그러면\s+(.*)\s+중\s+하나는\s+어때\?")
+    
+    # 초기 추천/상세 조언 패턴: '따라서 ... 기운을 채울 수 있는 [음식 목록]을(를) 추천해.'
+    pattern_initial_advice = re.compile(r"따라서\s+.*기운을\s+채울\s+수\s+있는\s+(.*)을\s*\(를\)\s*추천해\.")
+
+    for msg in latest_bot_messages:
+        content = msg.content.strip()
+        
+        # 1. 규칙 2 (새로운 메뉴 3가지 추천) 패턴 확인
+        match_rule2 = pattern_rule2.search(content)
+        if match_rule2:
+            food_list_str = match_rule2.group(1).strip()
+            # 콤마로 분리하여 리스트로 반환: ['음식명1', '음식명2', '음식명3']
+            return [f.strip() for f in food_list_str.split(',')]
+
+        # 2. 초기 추천/상세 조언 패턴 확인
+        match_advice = pattern_initial_advice.search(content)
+        if match_advice:
+            food_list_str = match_advice.group(1).strip()
+            # 콤마로 분리하여 리스트로 반환: ['시저샐러드', '토마토파스타', ...]
+            return [f.strip() for f in food_list_str.split(',')]
+            
+        # [MENU_SELECTED] 이후의 식당 추천 메시지는 추천 목록이 아니므로 무시하고 그 이전 메시지로 넘어갑니다.
+
+    # 적절한 메뉴 목록을 찾지 못했다면 빈 리스트 반환
+    return []
+
+# 유사도 검색 - 식당 정보 검색 및 추천 함수
+def search_and_recommend_restaurants(menu_name: str, db: Session) -> str:
+    # 1. ChromaDB 연결
+    embeddings = get_embeddings()
+    chroma_client = get_chroma_client()
+
+    vectorstore_restaurants = Chroma(
+        client=chroma_client,
+        collection_name=COLLECTION_NAME_RESTAURANTS,
+        embedding_function=embeddings
+    )
+    
+    # 2. 메뉴 이름으로 유사 식당 검색 (k=10)
+    search_query = f"'{menu_name}' 메뉴를 판매하는 맛집 식당"
+    
+    try:
+        restaurant_docs = vectorstore_restaurants.similarity_search(search_query, k=10)
+    except Exception as e:
+        print(f"Chroma 검색 오류: {e}")
+        return "검색에 문제가 생겼어. 다시 시도해 줘."
+
+    if not restaurant_docs:
+        return f"앗, 아쉽게도 '{menu_name}' 메뉴를 파는 식당 정보는 아직 없어. 다른 메뉴를 추천해 줄까?"
+
+    validated_restaurants = []
+    for doc in restaurant_docs:
+        content = doc.page_content.strip()
+        menu_snippet = doc.metadata.get("menu", "") 
+        
+        # 식당의 내용(content)이나 메타데이터 메뉴에 menu_name(사용자 요청 메뉴)가 있는지 확인
+        if menu_name in content or menu_name in menu_snippet:
+            validated_restaurants.append(doc)
+            if len(validated_restaurants) >= 3:
+                break # 3개만 찾으면 필터링 중단
+                
+    # 필터링 후에도 결과가 없는 경우 처리
+    if not validated_restaurants:
+        return f"앗, 아쉽게도 '{menu_name}' 메뉴를 파는 식당 정보는 아직 없어. 다른 메뉴를 추천해 줄까?"
+    
+    
+    # 3. 검색 결과 파싱 및 메시지 조합
+    recommendation_messages = []
+    
+    for idx, doc in enumerate(validated_restaurants, 1):
+        content = doc.page_content.strip()
+        
+        try:            
+            # 1. 식당 이름 추출: 문장 시작 부분에 있을 가능성 높음. (이름은 ~에 위치해 있습니다.)
+            name_match = re.search(r"^([^은]+)은\s+([^에]+)에\s+위치해\s+있습니다\.", content)
+            
+            # 2. 카테고리 추출: "주요 카테고리는 [카테고리]이며"
+            category_match = re.search(r"주요\s+카테고리는\s+([^이]+)이며", content)
+            
+            # 3. 메뉴 추출: "메뉴는 [메뉴 목록]입니다." 또는 "메뉴를 제공합니다."
+            menu_match = re.search(r"제공합니다\.\s*([^.$]*)", content)
+            
+            if name_match:
+                name = name_match.group(1).strip()
+                address = name_match.group(2).strip()
+            else:
+                # name_match가 없는 경우 메타데이터에서 이름과 주소 가져오기
+                name = doc.metadata.get("name", f"식당 {idx}")
+                address = doc.metadata.get("address", "주소 불명").split('(')[0].strip()
+            
+            category = category_match.group(1).strip() if category_match else "카테고리 불명"
+            
+            menu_snippet = doc.metadata.get("menu", "대표 메뉴 불명") 
+
+            # 최종 추천 문장 생성
+            address_snippet = address.split('(')[0].strip()
+            
+            base_message = f"▪️ **{name}**: {address_snippet}에 있고, 카테고리는 {category}이야."
+            
+            menu_info = ""
+            # 메뉴 스니펫이 있고, 불명확한 값이 아닐 때만 메뉴 정보 추가
+            if menu_snippet and menu_snippet not in ["대표 메뉴 불명", "메뉴 정보 없음"]:
+                menu_info = f" {menu_snippet} 등의 메뉴를 팔고 있어!"
+
+            recommendation_messages.append(base_message + menu_info)
+            
+        except Exception as e:
+            # 파싱에 실패하면 메타데이터 사용
+            name = doc.metadata.get("name", f"식당 {idx}")
+            address_snippet = doc.metadata.get("address", "주소 불명").split('(')[0].strip()
+            category_meta = doc.metadata.get("category", "불명")
+            menu_meta = doc.metadata.get("menu", "불명")
+            recommendation_messages.append(
+                f"▪️ {name}: {address_snippet}에 있어! (카테고리: {category_meta}) (메뉴: {menu_meta})"
+            )
+            
+    # 4. 최종 메시지 조합
+    recommendation_list_str = "\n".join(recommendation_messages)
+    
+    final_message = (
+        f"그러면 **{menu_name}** 을(를) 먹으러 갈 만한 식당 3곳을 추천해 줄게! \n"
+        f"{recommendation_list_str}\n\n"
+        f"다른 행운의 맛집도 추천해줄까?"
+    )
+    
+    return final_message
+
 # llm 호출 및 응답 반환
-def generate_llm_response(conversation_history: str, user_message: str) -> str:
+def generate_llm_response(conversation_history: str, user_message: str, current_recommended_foods: List[str]) -> str:
+    # 지금까지 추천한 메뉴 목록을 문자열로 변환
+    current_foods_str = ', '.join(current_recommended_foods)
+    print(f"[DEBUG] current_recommended_foods: {current_foods_str}")
+
     prompt = (
         "너는 오늘의 운세와 오행 기운에 맞춰 음식을 추천해주는 챗봇 '밥풀이'야. "
         "너의 목표는 사용자의 운세에 부족한 오행 기운을 채워줄 수 있는 음식을 추천하는 거야. "
         "항상 반말로 대화해. "
         "첫 인사(예: '안녕! 나는 오늘의 운세에 맞춰 행운의 맛집을 추천해주는 밥풀이야!')는 이미 보냈으니까 절대 다시 하지 마. "
-        
+
+        "[출력 지침] "
+        "너는 오직 아래 대화 규칙 중 하나를 골라, 그 규칙에 명시된 형식으로만 답변해야 해. "
+
         "[대화 규칙]"
         "1. 사용자가 음식과 관련 없는 질문이나 감정 표현을 하면 "
-        "  (예: 피곤해, 귀찮아, 씻기 싫다, 심심하다, 졸리다, 외로워, 공부하기 싫어, 등), "
-        "  감정에는 짧게 공감하되, 자세한 대화나 설명은 하지 마. "
-        "  운세에 맞춰 너가 추천할 오행 기운에 대한 이야기만 하며 대화를 메뉴 추천으로 돌려야 해. "
-        "  이 상황에서는 절대로 음식 이름, 메뉴 목록, 식당에 대한 언급을 하지 마. 무조건 반말로 해"
+        "  (예: 피곤해, 귀찮아, 씻기 싫다, 심심하다, 졸리다, 외로워, 공부하기 싫어, 짜증난다, '오늘 정말 지친다' 등), "
+        "  감정에는 짧게 공감하되, 자세한 대화나 설명은 하지 마. "
+        "  답변은 오직 다음 형식(템플릿) 중 하나를 선택해야 해. 다른 텍스트는 추가하지 마:"
+        "  * 형식 1 (공감 후 유도): '힘들었구나. 네 운세에 좋은 기운을 채워줄 음식이라도 골라봐!'"
+        "  * 형식 2 (공감 후 유도): '많이 피곤하겠다. 오행 기운을 북돋아 줄 메뉴를 어서 골라봐.'"
+        "  이 상황에서는 절대로 직접적인 음식 이름, 메뉴 목록, 식당에 대한 언급을 하지 마. 특히, 규칙 2의 '그러면 ~ 어때?' 형식은 절대 금지야."
+        "  절대로 스스로 메뉴를 선택하여 [MENU_SELECTED] 태그를 반환하면 안 돼. 이는 사용자가 메뉴를 명확히 선택할 때만 허용돼."
 
-        "2. 사용자가 '다른 메뉴', '다른 거', '별로야', '싫어', '바꿔줘' 같은 말을 하면 "
-        "  그건 이전 추천을 거부한 거야. 이전에 추천한 메뉴는 절대 다시 언급하지 말고, LLM의 지식 기반을 활용하여 3가지의 완전히 새로운 메뉴를 생성해야 해."
-        "  그럴 땐 딱 한 문장으로 이렇게 말해: "
-        "  '그러면 [음식명1], [음식명2], [음식명3] 중 하나는 어때?' "
-        "  운세나 오행 언급 없이 음식 이름만 제시해. "
+        "2. 사용자가 '다른 메뉴', '다른 거', '~ 빼고', '별로야', '바꿔줘', '안 땡겨' 같은 말을 하면 "
+        f"  그건 이전 추천을 거부한 거야. 이전에 추천한 메뉴 목록 {current_foods_str}는 **절대로 다시 언급하지 말고**, LLM의 지식 기반을 활용하여 **3가지의 완전히 새로운 메뉴**를 생성해야 해."
+        "  답변은 딱 한 문장으로 이렇게 말해: "
+        "  '그러면 [음식명1], [음식명2], [음식명3] 중 하나는 어때?' "
+        "  운세나 오행 언급 없이 음식 이름만 제시해. "
 
-        "3. 사용자가 특정 메뉴를 선택하면, "
-        "  그 메뉴를 제공하는 식당 3곳을 간단히 추천해. "
-        "  식당 이름, 거리, 대표 메뉴만 알려줘. 오행 이야기는 하지 마. 무조건 반말로 해"
+        "3. 사용자가 '~ 좋다', '~ 먹을래', '~ 먹고 싶어', '~로 할게', '~ 알려줘' 등 특정 메뉴를 확정 짓는 표현을 사용하거나, "
+        "  이전에 추천된 메뉴 중 하나를 긍정적으로 언급하며 확정하면 (예: '비빔밥 좋다!'), "
+        "  이전에 추천했든, 사용자가 새로 요청했든, 사용자가 최종 선택한 그 음식 이름으로 **오직 [MENU_SELECTED:메뉴 이름] 형태로만 반환해야 해.** "
+        "  이 태그 외의 다른 대화 텍스트(예: 오행 설명, 공감 표현, 질문)는 단 1글자도 추가하면 안 돼. 오직 태그 하나만 반환해야 해."
+        "  절대로 규칙 2의 형태('그러면 ~ 어때?')를 반환해서는 안 돼."
+        "  예시 1: 사용자가 '비빔밥 좋다!'라고 하면, 응답은 **'[MENU_SELECTED:비빔밥]'**여야 해."
+        "  예시 2: 사용자가 '파스타 먹을래'라고 하면, 응답은 '[MENU_SELECTED:파스타]'여야 해."
+        "  이 태그 외의 응답은 규칙 1 또는 2를 적용해야 해."
 
-        "대화 전체에서 반말 유지, 문장은 간결하고 따뜻하게. "
+        "대화 전체에서 반말 유지, 문장은 간결하고 친절하게. "
         "지금부터 사용자의 입력이 들어올 거야. "
         "입력에 따라 위 규칙 중 하나를 골라서 적용해. "
         "입력이 규칙 1에 해당하면 음식 이름을 절대 내뱉지 말고 오행만 언급해. "
@@ -218,11 +367,13 @@ def generate_llm_response(conversation_history: str, user_message: str) -> str:
         f"{conversation_history}"
         f"사용자: {user_message}"
     )
-    
+
     response = client.models.generate_content(
         model=model_name,
         contents=[prompt],
         config=types.GenerateContentConfig(temperature=0.7)
     )
 
-    return response.text.strip() if response.text else "응답 없음"
+    llm_response_text = response.text.strip()
+        
+    return llm_response_text
