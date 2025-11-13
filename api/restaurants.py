@@ -6,7 +6,6 @@ from pydantic import BaseModel
 from datetime import time
 from math import radians, sin, cos, sqrt, atan2
 
-# ⚠️ core.firebase_auth, core.db, core.models 는 프로젝트 구조에 맞게 import 합니다.
 from core.firebase_auth import verify_firebase_token
 from core.db import get_db
 from core.models import Restaurant, RestaurantFacility, Reviews
@@ -56,6 +55,9 @@ class RestaurantDetail(BaseModel):
     address: Optional[str]
     phone: Optional[str]
     image: Optional[str] = None
+
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     
     menus: List[MenuBase] 
     hours: List[OpeningHourBase]
@@ -65,25 +67,8 @@ class RestaurantDetail(BaseModel):
     class Config:
         from_attributes = True
         
-# 식당 캐러셜 카드용 일부 내용만 
-class RestaurantSummary(BaseModel):
-    id: int
-    name: str
-    category: str
-    address: Optional[str]
-    image: Optional[str] = None
-    
-    latitude: Optional[float] = None
-    longitude: Optional[float] = None
-    
-    rating: float = 0.0
-    review_count: int = 0
 
-    class Config:
-        from_attributes = True
-        
-        
-# 식당 상세 정보 및 메뉴 조회 API
+# 식당 상세 정보 조회 API
 @router.get(
     "/detail/{restaurant_id}",
     response_model=RestaurantDetail,
@@ -141,7 +126,7 @@ def get_nearby_restaurants(
         if restaurant.latitude is None or restaurant.longitude is None:
             continue
             
-        distance = haversine(lat, lon, restaurant.latitude, restaurant.longitude)
+        distance = haversine(lat, lon, restaurant.latitude, restaurant.longitude)        
         
         final_rating = float(rating_value) if rating_value is not None else 0.0
         final_review_count = count_value if count_value is not None else 0
