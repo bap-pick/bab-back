@@ -1,15 +1,15 @@
+import re
+import random 
+from typing import List
+from sqlalchemy.orm import Session
 import google.genai as genai
 from google.genai import types
+from langchain_chroma import Chroma
 from core.config import GEMMA_API_KEY
-from core.models import ChatMessage
-from sqlalchemy.orm import Session
+from core.models import ChatMessage, Restaurant
 from api.saju import _get_oheng_analysis_data
 from saju.message_generator import define_oheng_messages
-from typing import List
-import random 
-import re 
 from vectordb.vectordb_util import get_embeddings, get_chroma_client, COLLECTION_NAME_RESTAURANTS
-from langchain_chroma import Chroma
 
 client = genai.Client(api_key=GEMMA_API_KEY)
 model_name = "gemma-3-4b-it"
@@ -17,68 +17,46 @@ model_name = "gemma-3-4b-it"
 # 오행별 음식 목록
 OHAENG_FOOD_LISTS = {
     '목(木)': [
-        "미네스트로네", "토마토파스타", "케밥", "또르띠야", "고추잡채", "시저샐러드", 
-        "청경채볶음", "비빔밥", "치아씨푸딩", "시푸드샐러드", "루꼴라피자", "스무디볼", 
-        "아보카도샐러드", "요거트볼", "그릭요거트", "오트밀", "그래놀라", "시금치", "바질파스타",
-        "바질리조또", "샐러드", "월남쌈"
+        "샐러드", "시저샐러드", "아보카도샐러드", "유자샐러드", "그릭요거트", "요거트볼",
+        "스무디볼", "바질파스타", "시금치크림파스타", "그린커리", "쌈밥", "월남쌈",
+        "냉이된장국", "미역국", "부추전", "비빔밥", "채소비빔밥", "바질리조또",
+        "루꼴라피자", "그린스무디", "케일샐러드", "쑥국", "브로콜리볶음", "청경채볶음"
     ],
     '화(火)': [
-        "로스트치킨", "국물떡볶이", "페퍼로니피자", "고추짬뽕", "미트볼", "사천닭날개", 
-        "비빔국수", "카레떡볶이", "새우튀김", "팔라펠", "카레빵", "마파두부", 
-        "마늘볶음밥", "춘권", "닭꼬치", "새우깐풍기", "치킨커틀릿", "고추튀김", 
-        "삼선짬뽕", "라조기", "사천탕수육", "고추탕수육", "샤와르마", "치킨너겟", 
-        "꿔바새우", "제육김밥", "베이컨버거", "마늘탕수육", "마늘닭", "탕수육", 
-        "오징어튀김", "유린기", "인도커리", "깐쇼닭", "프라이드치킨", "로제떡볶이", 
-        "깐풍기", "사천짜장", "어향가지", "라볶이", "치즈피자", "바비큐립", 
-        "마라새우", "팬케이크", "마라샹궈", "홍쇼육", "닭강정", "치즈떡볶이", 
-        "사천두부", "마라탕", "오향장육", "타불레", "고추새우", "떡볶이", 
-        "바질파스타", "스팸마요덮밥", "마늘새우", "알리오올리오", "스테이크샐러드", "미트스파게티", 
-        "오믈렛", "불닭마요덮밥", "유린새우", "부리또", "가스파초", "오향닭", 
-        "브루스케타", "불고기김밥", "꿔바로우", "제육덮밥", "팔락파니르", "새우크림리조또", 
-        "카레라면", "비프스튜", "마르게리타피자", "청초새우", "핫도그", "클럽샌드위치", 
-        "브라우니", "프렌치토스트", "새우크로켓", "양주볶음밥", "마라훠궈", "파히타", 
-        "나초", "깐쇼새우", "고추두부볶음", "북경오리", "토마토계란볶음", "베이컨샐러드", 
-        "김말이튀김", "갈릭브레드", "마라새우", "치킨스튜", "도넛", "피자", 
-        "비프버거", "팔보채", "양고기꼬치", "홍쇼육", "난자완스", "스테이크", 
-        "파파담", "탄두리치킨"
+        "떡볶이", "로제떡볶이", "불닭볶음면", "김치찌개", "부대찌개", "매운탕",
+        "짬뽕", "제육볶음", "불고기덮밥", "닭갈비", "불고기", "양념치킨",
+        "치킨너겟", "닭강정", "치즈피자", "마르게리타피자", "토마토파스타", "로제파스타",
+        "스파이시커리", "고추잡채", "마파두부", "고추탕수육", "사천짜장", "오징어볶음",
+        "라볶이", "비빔국수", "닭꼬치", "스테이크", "핫도그", "토마토리조또",
+        "불닭마요덮밥", "베이컨버거", "고추두부볶음", "김말이튀김", "피자", "나초"
     ],
     '토(土)': [
-        "고기만두", "머핀", "베이글", "크림새우", "바게트", "군밤", 
-        "쿠키", "핫케이크", "돈까스김밥", "참치마요김밥", "부추전", "피타빵", 
-        "떡라면", "크림우동", "버섯리조또", "마카로니샐러드", "감자전", "난", 
-        "마카롱", "송이덮밥", "짜춘권", "군고구마", "짜장밥", "후무스", 
-        "치즈그라탕", "호빵", "크로켓", "호떡", "햄버거", "돈가스", 
-        "브라우니", "포테이토샐러드", "찐만두", "크레페", "리조또", "마카로니앤치즈", 
-        "전가복", "감자튀김", "김치전", "라자냐", "김밥", "불고기피자", 
-        "라면", "고르곤졸라피자", "감자그라탕", "계란볶음밥", "함박스테이크", "잡채밥", 
-        "짜장면", "잔치국수", "샌드위치", "수제버거", "우육면", "타코", 
-        "덮밥", "주먹밥", "찹쌀도너츠", "김치라면", "크림파스타", "새우볶음밥", 
-        "게살볶음밥", "고르곤졸라피자", "떡꼬치", "멸치주먹밥", "감자핫도그", "치즈볼", 
-        "떡산적", "모둠튀김", "떡국", "우동", "무사카", "볶음우동", 
-        "쫄면", "계란빵", "유부초밥", "뇨끼", "가지볶음", "비리야니", 
-        "감자범벅", "탕수새우", "짜파게티", "새우김밥", "고구마튀김", 
-        "돈까스", "고르곤졸라피자"
+        "설렁탕", "삼계탕", "곰탕", "된장찌개", "순두부찌개", "감자탕",
+        "오리백숙", "닭죽", "호박죽", "감자전", "감자탕", "크림파스타",
+        "크림리조또", "카레라이스", "오므라이스", "함박스테이크", "스테이크덮밥", "돈까스",
+        "햄버거", "베이글", "쿠키", "머핀", "크로플", "호떡",
+        "고구마맛탕", "단호박스프", "감자튀김", "치즈케이크", "샌드위치", "브라우니",
+        "카스테라", "우동", "리조또", "김밥", "짜장면", "라자냐"
     ],
     '금(金)': [
-        "짜이", "순대볶음", "닭백숙", "오리백숙", "삼계탕", "계란찜", 
-        "생선찜", "두부찜", "모두부", "두부구이", "순두부", "순두부찌개", 
-        "맑은생선국", "맑은도가니탕", "닭죽", "흰죽", "양파볶음"
+        "치킨", "후라이드치킨", "간장치킨", "닭백숙", "오리백숙", "순대국",
+        "순두부", "두부조림", "계란찜", "계란국", "어묵탕", "무국",
+        "콩나물국밥", "생선까스", "두부구이", "도가니탕", "닭죽", "흰죽",
+        "유린기", "치킨커틀릿", "크림우동", "오징어순대", "양파튀김", "명란파스타"
     ],
     '수(水)': [
-        "해산물리조또", "해삼탕", "유자새우", "어묵꼬치", "하가우", "스튜", 
-        "홍합탕", "오뎅", "클램차우더", "새우딤섬", "훠궈", "새우완탕", 
-        "해물그라탕", "콘스프", "해파리냉채", "해물누룽지탕", "파스타", "브로콜리수프", 
-        "어묵탕", "유산슬밥", "피쉬앤칩스", "도미찜", "샥스핀찜", "짬뽕", 
-        "물만두", "양장피", "수블라키", "아사이볼", "삼선우동", "홍합탕"
+        "초밥", "물회", "해물파스타", "해물볶음밥", "해물찜", "오징어덮밥",
+        "간장게장", "새우장", "장어덮밥", "굴국밥", "조개국", "홍합탕",
+        "짬뽕", "우동", "라멘", "피쉬앤칩스", "해물리조또", "연어덮밥",
+        "새우볶음밥", "회덮밥", "초계국수", "해장국", "홍합스파게티", "미역냉국",
+        "오뎅탕", "물만두", "클램차우더", "해물누룽지탕", "해삼탕", "아사이볼"
     ],
 }
 
-# 오행별 음식 목록 중 랜덤 count개만큼만 문자열로 반환
+# 오행별 음식 목록에서 랜덤으로 count개만큼만 문자열로 반환
 def get_food_recommendations_for_ohaeng(oheng: str, count: int = 3) -> str:
     foods = OHAENG_FOOD_LISTS.get(oheng)
-
     recommended_foods = random.sample(foods, min(count, len(foods)))
-    
     return ', '.join(recommended_foods)
 
 def normalize_to_hangul(oheng_name: str) -> str:
@@ -122,7 +100,7 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
         # 겹치는 경우
         control_advice = (
             f"특히, 부족한 {lacking_oheng_str} 기운은 강한 {strong_oheng_str}을 조절해주는 딱 맞는 상극 오행이기도 해! "
-            f"따라서 {lacking_oheng_str} 기운의 음식을 먹으면 부족함도 채우고, 넘치는 기운까지 잡을 수 있어 😉"
+            f"따라서 {lacking_oheng_str} 기운의 음식을 먹으면 부족한 기운도 채우고, 넘치는 기운까지 잡을 수 있어 😉"
         )
     
     elif strong_oheng and unique_control_oheng:
@@ -142,7 +120,7 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
         )
 
     # 3. 최종 메시지 조합
-    final_message = lacking_advice + control_advice + " 여기서 먹고 싶은 메뉴 하나 고르면 식당까지 바로 추천해줄게!"
+    final_message = lacking_advice + control_advice + "<br>여기서 먹고 싶은 메뉴 하나 고르면 식당까지 바로 추천해줄게!"
     return final_message
 
 # 첫 메시지 생성 - 오행 기반 상세 메시지만
@@ -190,36 +168,30 @@ def get_latest_recommended_foods(db: Session, chatroom_id: int) -> List[str]:
         .all()
     )
 
-    # 규칙 2 패턴: '그러면 [음식명1], [음식명2], [음식명3] 중 하나는 어때?'
-    pattern_rule2 = re.compile(r"그러면\s+(.*)\s+중\s+하나는\s+어때\?")
+    pattern_rule = re.compile(r"그러면\s+(.*)\s+중\s+하나는\s+어때\?")
+    food_ohaeng_recommendation_prefix = r"(.*기운의\s+음식\s+|따라서\s+.*기운을\s+채울\s+수\s+있는\s+)"
+    pattern_ohaeng_recommendation = re.compile(food_ohaeng_recommendation_prefix + r"(.*)을\s*\(를\)\s*추천해\.")
     
-    # 초기 추천/상세 조언 패턴: '따라서 ... 기운을 채울 수 있는 [음식 목록]을(를) 추천해.'
-    pattern_initial_advice = re.compile(r"따라서\s+.*기운을\s+채울\s+수\s+있는\s+(.*)을\s*\(를\)\s*추천해\.")
-
     for msg in latest_bot_messages:
         content = msg.content.strip()
         
         # 1. 규칙 2 (새로운 메뉴 3가지 추천) 패턴 확인
-        match_rule2 = pattern_rule2.search(content)
-        if match_rule2:
-            food_list_str = match_rule2.group(1).strip()
-            # 콤마로 분리하여 리스트로 반환: ['음식명1', '음식명2', '음식명3']
+        match_rule = pattern_rule.search(content)
+        if match_rule:
+            food_list_str = match_rule.group(1).strip()
             return [f.strip() for f in food_list_str.split(',')]
 
-        # 2. 초기 추천/상세 조언 패턴 확인
-        match_advice = pattern_initial_advice.search(content)
-        if match_advice:
-            food_list_str = match_advice.group(1).strip()
-            # 콤마로 분리하여 리스트로 반환: ['시저샐러드', '토마토파스타', ...]
+        # 2. 초기 오행 기반 추천 패턴 확인
+        match_recommendation = pattern_ohaeng_recommendation.search(content)
+        if match_recommendation:
+            food_list_str = match_recommendation.group(2).strip()
             return [f.strip() for f in food_list_str.split(',')]
             
-        # [MENU_SELECTED] 이후의 식당 추천 메시지는 추천 목록이 아니므로 무시하고 그 이전 메시지로 넘어갑니다.
-
     # 적절한 메뉴 목록을 찾지 못했다면 빈 리스트 반환
     return []
 
 # 유사도 검색 - 식당 정보 검색 및 추천 함수
-def search_and_recommend_restaurants(menu_name: str, db: Session) -> str:
+def search_and_recommend_restaurants(menu_name: str, db: Session):
     # 1. ChromaDB 연결
     embeddings = get_embeddings()
     chroma_client = get_chroma_client()
@@ -229,95 +201,100 @@ def search_and_recommend_restaurants(menu_name: str, db: Session) -> str:
         collection_name=COLLECTION_NAME_RESTAURANTS,
         embedding_function=embeddings
     )
-    
-    # 2. 메뉴 이름으로 유사 식당 검색 (k=10)
+
     search_query = f"'{menu_name}' 메뉴를 판매하는 맛집 식당"
-    
+
+    # 2. 유사도 검색
     try:
         restaurant_docs = vectorstore_restaurants.similarity_search(search_query, k=10)
     except Exception as e:
         print(f"Chroma 검색 오류: {e}")
-        return "검색에 문제가 생겼어. 다시 시도해 줘."
 
+        return {
+            "initial_message": "식당 검색 중 오류가 발생했어.",
+            "restaurants": [],
+            "final_message": "다른 메뉴도 추천해줄까?",
+            "count": 0
+        }
+
+    # 3. 검색 결과 없음
     if not restaurant_docs:
-        return f"앗, 아쉽게도 '{menu_name}' 메뉴를 파는 식당 정보는 아직 없어. 다른 메뉴를 추천해 줄까?"
+        return {
+            "initial_message": f"아쉽게도 **{menu_name}** 메뉴를 파는 식당을 찾지 못했어.",
+            "restaurants": [],
+            "final_message": "다른 메뉴도 추천해줄까?",
+            "count": 0
+        }
 
+    # 4. 3개 필터링
     validated_restaurants = []
     for doc in restaurant_docs:
         content = doc.page_content.strip()
-        menu_snippet = doc.metadata.get("menu", "") 
-        
-        # 식당의 내용(content)이나 메타데이터 메뉴에 menu_name(사용자 요청 메뉴)가 있는지 확인
+        menu_snippet = doc.metadata.get("menu", "")
+
         if menu_name in content or menu_name in menu_snippet:
             validated_restaurants.append(doc)
             if len(validated_restaurants) >= 3:
-                break # 3개만 찾으면 필터링 중단
-                
-    # 필터링 후에도 결과가 없는 경우 처리
+                break
+
+    # 필터 후 없음
     if not validated_restaurants:
-        return f"앗, 아쉽게도 '{menu_name}' 메뉴를 파는 식당 정보는 아직 없어. 다른 메뉴를 추천해 줄까?"
-    
-    
-    # 3. 검색 결과 파싱 및 메시지 조합
-    recommendation_messages = []
-    
-    for idx, doc in enumerate(validated_restaurants, 1):
-        content = doc.page_content.strip()
-        
-        try:            
-            # 1. 식당 이름 추출: 문장 시작 부분에 있을 가능성 높음. (이름은 ~에 위치해 있습니다.)
-            name_match = re.search(r"^([^은]+)은\s+([^에]+)에\s+위치해\s+있습니다\.", content)
-            
-            # 2. 카테고리 추출: "주요 카테고리는 [카테고리]이며"
-            category_match = re.search(r"주요\s+카테고리는\s+([^이]+)이며", content)
-            
-            # 3. 메뉴 추출: "메뉴는 [메뉴 목록]입니다." 또는 "메뉴를 제공합니다."
-            menu_match = re.search(r"제공합니다\.\s*([^.$]*)", content)
-            
-            if name_match:
-                name = name_match.group(1).strip()
-                address = name_match.group(2).strip()
-            else:
-                # name_match가 없는 경우 메타데이터에서 이름과 주소 가져오기
-                name = doc.metadata.get("name", f"식당 {idx}")
-                address = doc.metadata.get("address", "주소 불명").split('(')[0].strip()
-            
-            category = category_match.group(1).strip() if category_match else "카테고리 불명"
-            
-            menu_snippet = doc.metadata.get("menu", "대표 메뉴 불명") 
+        return {
+            "initial_message": f"아쉽게도 **{menu_name}** 메뉴를 파는 식당을 찾지 못했어.",
+            "restaurants": [],
+            "final_message": "다른 메뉴도 추천해줄까?",
+            "count": 0
+        }
 
-            # 최종 추천 문장 생성
-            address_snippet = address.split('(')[0].strip()
-            
-            base_message = f"▪️ **{name}**: {address_snippet}에 있고, 카테고리는 {category}이야."
-            
-            menu_info = ""
-            # 메뉴 스니펫이 있고, 불명확한 값이 아닐 때만 메뉴 정보 추가
-            if menu_snippet and menu_snippet not in ["대표 메뉴 불명", "메뉴 정보 없음"]:
-                menu_info = f" {menu_snippet} 등의 메뉴를 팔고 있어!"
+    # 5. 식당 ID로 MySQL 정보 가져오기
+    restaurant_ids = [doc.metadata.get("restaurant_id") for doc in validated_restaurants]
+    valid_ids = [id for id in restaurant_ids if id is not None]
 
-            recommendation_messages.append(base_message + menu_info)
-            
-        except Exception as e:
-            # 파싱에 실패하면 메타데이터 사용
-            name = doc.metadata.get("name", f"식당 {idx}")
-            address_snippet = doc.metadata.get("address", "주소 불명").split('(')[0].strip()
-            category_meta = doc.metadata.get("category", "불명")
-            menu_meta = doc.metadata.get("menu", "불명")
-            recommendation_messages.append(
-                f"▪️ {name}: {address_snippet}에 있어! (카테고리: {category_meta}) (메뉴: {menu_meta})"
-            )
-            
-    # 4. 최종 메시지 조합
-    recommendation_list_str = "\n".join(recommendation_messages)
-    
-    final_message = (
-        f"그러면 **{menu_name}** 을(를) 먹으러 갈 만한 식당 3곳을 추천해 줄게! \n"
-        f"{recommendation_list_str}\n\n"
-        f"다른 행운의 맛집도 추천해줄까?"
-    )
-    
-    return final_message
+    mysql_restaurants = db.query(Restaurant).filter(Restaurant.id.in_(valid_ids)).all()
+    id_to_mysql_restaurant = {r.id: r for r in mysql_restaurants}
+
+    # 6. 결과 정제
+    restaurant_data_list = []
+
+    for doc in validated_restaurants[:3]:
+        metadata = doc.metadata
+        restaurant_id = metadata.get("restaurant_id")
+
+        mysql_data = id_to_mysql_restaurant.get(restaurant_id)
+        image_url = None
+
+        # 이미지 처리
+        if mysql_data and mysql_data.image:
+            image_links = mysql_data.image.split(',')
+            first_link = image_links[0].strip()
+
+            if first_link.startswith(("'", '"')) and first_link.endswith(("'", '"')):
+                first_link = first_link[1:-1]
+
+            if first_link:
+                image_url = first_link
+
+        menu_snippet = metadata.get("menu", "메뉴 정보 없음").split(', ')[:3]
+
+        restaurant_data_list.append({
+            "name": metadata.get("place_name", mysql_data.name if mysql_data else "이름 없음"),
+            "address": metadata.get("road_address_name", mysql_data.address if mysql_data else "주소 없음"),
+            "category": metadata.get("category_group_name", mysql_data.category if mysql_data else "카테고리 없음"),
+            "menu_snippet": menu_snippet,
+            "image_url": image_url,
+            "id": restaurant_id
+        })
+
+    # 7. 최종 반환 payload
+    final_payload = {
+        "initial_message": f"그러면 **{menu_name}**을(를) 파는 식당을 추천해줄게! 😋",
+        "restaurants": restaurant_data_list,
+        "final_message": "다른 행운의 맛집도 추천해줄까?",
+        "count": len(restaurant_data_list)
+    }
+
+    return final_payload
+
 
 # llm 호출 및 응답 반환
 def generate_llm_response(conversation_history: str, user_message: str, current_recommended_foods: List[str]) -> str:
