@@ -1,8 +1,8 @@
-from sqlalchemy.orm import relationship
-from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float, Text, ForeignKey, DECIMAL
-from core.db import Base
-from datetime import datetime
 from typing import List
+from datetime import datetime
+from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, Date, Time, DateTime, Boolean, Float, Text, ForeignKey, Enum, DECIMAL
+from core.db import Base
 
 class User(Base):
     __tablename__ = "Users"
@@ -25,7 +25,21 @@ class User(Base):
     
     scraps = relationship("Scrap", back_populates="user")
     chatroom_memberships = relationship("ChatroomMember", back_populates="user")
-
+    
+    # Friendships 관계 추가
+    # 1. 내가 보낸 친구 요청 목록
+    sent_friend_requests = relationship(
+        "Friendships", 
+        foreign_keys='[Friendships.requester_id]', 
+        back_populates="requester"
+    )
+    # 2. 내가 받은 친구 요청 목록
+    received_friend_requests = relationship(
+        "Friendships", 
+        foreign_keys='[Friendships.receiver_id]', 
+        back_populates="receiver"
+    )
+    
 class ChatRoom(Base):
     __tablename__ = "Chat_rooms"
     id = Column(Integer, primary_key=True, index=True)
@@ -44,12 +58,13 @@ class ChatRoom(Base):
 
 class ChatMessage(Base):
     __tablename__ = "Chat_messages"
-    id = Column(Integer, primary_key=True) #메세지 고유 id
+    id = Column(Integer, primary_key=True)
     room_id = Column(Integer, ForeignKey("Chat_rooms.id", ondelete="CASCADE"), index=True, nullable=False)
-    sender_id = Column(String) # 메세지 보낸사람
-    role = Column(String) # 유저인지 ai 인지
-    content = Column(Text) #내용
-    timestamp = Column(DateTime, default=datetime.utcnow) #보낸시간
+    sender_id = Column(String)
+    role = Column(String)
+    content = Column(Text)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    message_type = Column(String(50), default="text")
 
     chatroom = relationship("ChatRoom", back_populates="messages")
 
@@ -94,11 +109,6 @@ class Restaurant(Base):
     latitude = Column(Integer, nullable=True)
     longitude = Column(Integer, nullable=True)
     
-    # 식당의 상위 오행 3개를 저장
-    top_ohaeng_1 = Column(String(10), nullable=True)
-    top_ohaeng_2 = Column(String(10), nullable=True)
-    top_ohaeng_3 = Column(String(10), nullable=True)
-    
     menus = relationship("Menu", back_populates="restaurant")
     hours = relationship("OpeningHour", back_populates="restaurant")
     facility_associations = relationship("RestaurantFacility", back_populates="restaurant")
@@ -120,7 +130,6 @@ class Menu(Base):
     menu_price = Column(Integer, nullable=True)
     restaurant_id = Column(Integer, ForeignKey('Restaurants.id'), nullable=False)
     
-    # Restaurant 모델과 연결: Menu 객체에서 menu.restaurant로 해당 식당 객체를 가져오기 위함
     restaurant = relationship("Restaurant", back_populates="menus")
     
     def __repr__(self):
@@ -194,3 +203,18 @@ class Scrap(Base):
 
     def __repr__(self):
         return f"<Scrap(user_id={self.user_id}, restaurant_id={self.restaurant_id})>" 
+    
+class Friendships(Base):
+    __tablename__ = "Friendships"
+
+    requester_id = Column(Integer, ForeignKey('Users.id'), primary_key=True, nullable=False)
+    receiver_id = Column(Integer, ForeignKey('Users.id'), primary_key=True, nullable=False)
+    status = Column(Enum('pending', 'accepted', 'rejected', name='friendship_status'), nullable=False, default='pending')
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # User와의 관계 설정
+    requester = relationship("User", foreign_keys=[requester_id], back_populates="sent_friend_requests")
+    receiver = relationship("User", foreign_keys=[receiver_id], back_populates="received_friend_requests")
+
+    def __repr__(self):
+        return f"<Friendships(requester_id={self.requester_id}, receiver_id={self.receiver_id}, status='{self.status}')>"
