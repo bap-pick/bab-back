@@ -301,6 +301,28 @@ def search_and_recommend_restaurants(menu_name: str, db: Session):
     return final_payload
 
 
+# 단체 채팅에서 사용자 메시지가 메뉴 추천 요청인지 감지하는 함수
+def is_initial_recommendation_request(user_message: str, conversation_history: str) -> bool:
+    # 대화 기록에서 봇의 상세 추천 메시지 패턴 확인
+    has_bot_recommendation = bool(
+        re.search(r"기운이 약하니|기운은.*조절해주는|기운으로 눌러주면", conversation_history)
+    )
+    
+    # 봇의 추천 메시지가 있다면 return
+    if has_bot_recommendation:
+        return False
+    
+    # 추천 관련 키워드
+    recommendation_keywords = [
+        "골라", "추천", "뭐 먹", "뭘 먹", "먹을거", "먹을 거",
+        #"점심", "저녁", "아침", "식사", "맛집", "메뉴", "음식",
+    ]
+    
+    # 사용자의 메시지에 추천 관련 키워드가 있는지 확인
+    user_message_lower = user_message.lower()
+    return any(keyword in user_message_lower for keyword in recommendation_keywords)
+
+
 # llm 호출 및 응답 반환
 def generate_llm_response(conversation_history: str, user_message: str, current_recommended_foods: List[str]) -> str:
     # 지금까지 추천한 메뉴 목록을 문자열로 변환
@@ -311,14 +333,16 @@ def generate_llm_response(conversation_history: str, user_message: str, current_
     너는 오늘의 운세와 오행 기운에 맞춰 음식을 추천해주는 챗봇 '밥풀이'야. 
     너의 목표는 사용자의 운세에 부족한 오행 기운을 채워줄 수 있는 음식을 추천하는 거야. 
     첫 인사는 절대 반복금지. 문장은 간결하게 
+    
+    사용자의 입력 메시지에서 '@밥풀' 멘션 태그는 이미 제거된 상태이니, '@밥풀' 멘션을 언급하지 않고 자연스럽게 답변하면 돼.
+    
     [규칙]
-
     1. 메뉴 직접 언급 시 (우선순위 2)
     사용자가 특정 음식 이름을 직접 언급하면  
     즉시 다음 형식으로만 답한다:
     [MENU_SELECTED:메뉴명]
     그 외 어떤 문장도 절대 출력하지 않는다.
-
+    
     2. 긍정 반응 시 (우선순위 3)
     사용자가 "좋아", "좋네", "오케이", "ㅇㅋ", "다 좋아"등 긍정 표현을 사용했고,
     특정 메뉴를 직접 언급하지 않았다면,
@@ -326,7 +350,7 @@ def generate_llm_response(conversation_history: str, user_message: str, current_
 
     이 경우 반드시 아래 형식으로만 답한다:
     [MENU_SELECTED_ALL:메뉴1, 메뉴2, 메뉴3]
-
+    
     3. 다른 메뉴 요청 시 (우선순위 4)
     사용자가 "다른 메뉴", "다른 거", "~빼고", "별로야", 
     "안 땡겨", "바꿔줘" 등 추천 거절의도가 보이면 
@@ -344,31 +368,6 @@ def generate_llm_response(conversation_history: str, user_message: str, current_
     사용자:{user_message}
     
     """
-
-
-
-        # "[규칙] "
-        # "1. 사용자가 음식과 관련 없는 이야기 시 자연스럽게 음식 추천대화로 유도해"
-        # "   예:  '많이 피곤하겠다. 오늘 기운을 채워줄 메뉴를 골라봐!'"
-        # "  절대 음식 이름이나 메뉴, 식당 언급 금지"
-
-        #  "2. 사용자가 이전에 추천한 메뉴를 긍정적으로 평가했을 때 "
-        # "   (예: '좋아!', 'ㅇㅋ', '좋네', '다 좋음', '좋아 좋아') "
-        # "   하지만 특정 메뉴를 직접 언급하지 않은 경우, "
-        # f"   이전 추천 {current_foods_str} 중 모든 메뉴를 선택한 것이다."
-        # "이 경우, 오직 '[MENU_SELECTED_ALL:메뉴1, 메뉴2, 메뉴3]' 형태로 반환."
-
-
-        # "3. 사용자가 '다른 메뉴', '다른 거', '~ 빼고', '별로야', '바꿔줘', '안 땡겨' 같은 말을 하면 "
-        # f"  이전추천 {current_foods_str}는 절대 다시 언급하지 말고"
-        # "  3가지의 완전히 새로운 메뉴를 추천: "
-        # "  '그러면 [음식명1], [음식명2], [음식명3] 중 하나는 어때?' "
-        # "  운세나 오행 언급 금지. "
-
-        # "4. 사용자가 메뉴 확정 시 , "
-        # "   오직 '[MENU_SELECTED:메뉴 이름]' 형태로만 반환. "
-        
-        
 
     response = client.models.generate_content(
         model=model_name,

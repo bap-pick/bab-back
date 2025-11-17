@@ -1,32 +1,20 @@
 import asyncio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 import firebase_admin
 from firebase_admin import credentials
 import os
 from dotenv import load_dotenv
 from api import auth, users, chat, saju, restaurants, scraps, friends
 from core.s3 import initialize_s3_client
-import uvicorn
 
-# ---------------------------------------------------------
-# 1) .env 절대경로로 정확하게 로드
-# ---------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 load_dotenv(dotenv_path=ENV_PATH, override=True)
 
-
-# ---------------------------------------------------------
-# 2) FastAPI 인스턴스 생성
-# ---------------------------------------------------------
 app = FastAPI()
 
-
-# ---------------------------------------------------------
-# 3) Firebase 초기화 함수
-# ---------------------------------------------------------
+# 파이어베이스 초기화
 def initialize_firebase_sync():
     RENDER_KEY_PATH = "/etc/secrets/firebase-key.json"
     LOCAL_KEY_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")  # from .env
@@ -62,10 +50,7 @@ def initialize_firebase_sync():
     else:
         print("경고: Firebase를 사용할 수 없습니다.")
 
-
-# ---------------------------------------------------------
-# 4) S3 초기화
-# ---------------------------------------------------------
+# S3 초기화
 def initialize_s3_sync():
     s3_client_info = initialize_s3_client()
     if s3_client_info:
@@ -73,27 +58,21 @@ def initialize_s3_sync():
     else:
         print("S3 클라이언트 초기화 실패")
 
-
-# ---------------------------------------------------------
-# 5) 서버 시작 시 Firebase + S3 초기화
-# ---------------------------------------------------------
+# 서버 시작 시 파이어베이스, S3 초기화
 @app.on_event("startup")
 async def startup_event():
     try:
-        await asyncio.gather(
-            asyncio.to_thread(initialize_firebase_sync),
-            asyncio.to_thread(initialize_s3_sync)
-        )
+        await asyncio.to_thread(initialize_firebase_sync)
+        await asyncio.to_thread(initialize_s3_sync)
+        print("서버 초기화 완료")
     except Exception as e:
         print(f"초기화 중 오류 발생: {e}")
         raise
 
-
-# ---------------------------------------------------------
-# 6) CORS 설정
-# ---------------------------------------------------------
+# CORS 설정
 origins = [
     "http://127.0.0.1:5500",
+    "http://127.0.0.1:5501",
     "https://bab-back.onrender.com",
     "https://bab-front-jet.vercel.app",
 ]
@@ -106,10 +85,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# ---------------------------------------------------------
-# 7) 라우터 등록 (friends 포함)
-# ---------------------------------------------------------
+# 라우터 추가
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(chat.router)
@@ -117,23 +93,3 @@ app.include_router(saju.router)
 app.include_router(restaurants.router)
 app.include_router(scraps.router)
 app.include_router(friends.router)
-
-# ---------------------------------------------------------
-# 8) Static 파일 설정
-# ---------------------------------------------------------
-os.makedirs("static/profile_images", exist_ok=True)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-
-# ---------------------------------------------------------
-# 9) 로컬 실행 시 Uvicorn Run
-# ---------------------------------------------------------
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=port,
-        reload=False   # 주의: reload=True면 비동기 초기화가 꼬릴 수 있음
-    )
