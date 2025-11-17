@@ -511,19 +511,28 @@ async def list_chatrooms(
         latest_content = latest_msg.content if latest_msg else "대화 내용 없음"
         latest_timestamp = latest_msg.timestamp if latest_msg else None
         
+        # 채팅방 멤버 수와 프로필 사진 목록
         member_count = None
-        #member_profiles = [] 
+        member_profiles = [] 
         
         if room.is_group:
             member_count = db.query(ChatroomMember).filter(
                 ChatroomMember.chatroom_id == room.id
             ).count()
             
-            # members = db.query(User).join(ChatroomMember).filter(
-            #     ChatroomMember.chatroom_id == room.id,
-            #     User.id != user.id  # 현재 사용자 제외
-            # ).limit(4).all()  # 최대 4명만
+            members = db.query(User).join(ChatroomMember).filter(
+                ChatroomMember.chatroom_id == room.id,
+                User.id != user.id  # 현재 사용자 제외
+            ).limit(4).all()  # 최대 4명만
 
+            member_profiles = [
+                {
+                    "nickname": m.nickname,
+                    "profile_image": m.profile_image or None
+                }
+                for m in members
+            ]
+            
         # 시간대 변환 로직
         kst_timestamp = None
         if latest_timestamp:
@@ -531,9 +540,7 @@ async def list_chatrooms(
                 utc_dt = UTC.localize(latest_timestamp)
             else:
                 utc_dt = latest_timestamp.astimezone(UTC)
-                
             kst_dt = utc_dt.astimezone(KST)
-            
             kst_timestamp = kst_dt.isoformat()
         
         result.append({
@@ -542,7 +549,8 @@ async def list_chatrooms(
             "is_group": room.is_group,
             "last_message_content": latest_content,
             "last_message_timestamp": kst_timestamp,
-            "member_count": member_count 
+            "member_count": member_count,
+            "member_profiles": member_profiles
         })
         
     return result
