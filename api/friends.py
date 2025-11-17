@@ -215,3 +215,46 @@ def handle_friend_request(
 
     else:
         raise HTTPException(status_code=400, detail="유효하지 않은 action입니다.")
+    
+    
+@router.get("/list", response_model=dict)
+def get_friends_list(
+    uid: str = Depends(verify_firebase_token), # 현재 로그인 사용자
+    db: Session = Depends(get_db)
+):
+    # UID를 DB ID로 변환
+    current_user_id = get_user_id_by_uid(db, uid)
+
+    # 1. 현재 사용자가 requester_id 이거나 receiver_id 이고, status가 'accepted'인 레코드를 모두 조회
+    accepted_friendships = db.query(Friendships).filter(
+        and_(
+            or_(
+                Friendships.requester_id == current_user_id, # 내가 요청을 보낸 경우
+                Friendships.receiver_id == current_user_id  # 내가 요청을 받은 경우
+            ),
+            Friendships.status == "accepted"
+        )
+    ).all()
+
+    friend_ids = []
+    # 2. 친구의 ID 추출
+    for friendship in accepted_friendships:
+        if friendship.requester_id == current_user_id:
+            # 내가 requester면 receiver_id가 친구 ID
+            friend_ids.append(friendship.receiver_id)
+        else:
+            # 내가 receiver면 requester_id가 친구 ID
+            friend_ids.append(friendship.requester_id)
+            
+    # 3. 친구 ID 목록을 사용하여 친구 사용자 정보(UID, 닉네임, 프로필) 조회
+    friends_info = db.query(User).filter(User.id.in_(friend_ids)).all()
+
+    results = []
+    for friend in friends_info:
+        results.append({
+            "firebase_uid": friend.firebase_uid,
+            "nickname": friend.nickname,
+            "profile_image": friend.profile_image,
+        })
+        
+    return {"friends": results}
