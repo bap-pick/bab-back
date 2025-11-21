@@ -93,7 +93,7 @@ def get_restaurant_detail(
     
     return restaurant
 
-# gps 기반 현재 위치 근처 식당 5개 조회 (이미지, 평점, 리뷰 개수, 위도/경도 포함)
+# 현재 위치 근처 식당 5개 조회 (1km 이내 리뷰 많은 순 정렬)
 @router.get(
     "/nearby",
     dependencies=[Depends(verify_firebase_token)]    
@@ -126,8 +126,12 @@ def get_nearby_restaurants(
         if restaurant.latitude is None or restaurant.longitude is None:
             continue
             
-        distance = haversine(lat, lon, restaurant.latitude, restaurant.longitude)        
+        distance_km = haversine(lat, lon, restaurant.latitude, restaurant.longitude)
         
+        # 1km 이내 식당만 필터링
+        if distance_km > 1.0: 
+            continue
+            
         final_rating = float(rating_value) if rating_value is not None else 0.0
         final_review_count = count_value if count_value is not None else 0
         
@@ -141,13 +145,16 @@ def get_nearby_restaurants(
             "longitude": restaurant.longitude,
             "rating": final_rating,
             "review_count": final_review_count,
-            "distance_km": round(distance, 2)
+            "distance_km": round(distance_km, 2)
         }
         
         nearby_with_distance.append(restaurant_data)
 
     # 거리순 정렬
-    nearby_with_distance.sort(key=lambda x: x["distance_km"])
+    # nearby_with_distance.sort(key=lambda x: x["distance_km"])
+    
+    # 리뷰 수(review_count) 내림차순 정렬
+    nearby_with_distance.sort(key=lambda x: x["review_count"], reverse=True)
 
     # limit 지정
     if limit:
@@ -157,3 +164,4 @@ def get_nearby_restaurants(
         "count": len(nearby_with_distance),
         "restaurants": nearby_with_distance
     }
+    
