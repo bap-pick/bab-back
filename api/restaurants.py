@@ -135,6 +135,9 @@ def get_nearby_restaurants(
         final_rating = float(rating_value) if rating_value is not None else 0.0
         final_review_count = count_value if count_value is not None else 0
         
+        # km 거리를 m단위로 변환
+        distance_m = int(round(distance_km * 1000))
+        
         restaurant_data = {
             "id": restaurant.id,
             "name": restaurant.name,
@@ -145,7 +148,8 @@ def get_nearby_restaurants(
             "longitude": restaurant.longitude,
             "rating": final_rating,
             "review_count": final_review_count,
-            "distance_km": round(distance_km, 2)
+            "distance_km": round(distance_km, 2),
+            "distance_m": distance_m
         }
         
         nearby_with_distance.append(restaurant_data)
