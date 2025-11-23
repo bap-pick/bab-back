@@ -46,6 +46,7 @@ class ChatRoom(Base):
     name = Column(String(30), nullable=True)     
     is_group = Column(Boolean, nullable=False, default=False)    
     last_message_id = Column(Integer, nullable=True) 
+    selected_menu = Column(String(255), nullable=True)
     
     memberships = relationship("ChatroomMember", cascade="all, delete-orphan")
     messages = relationship("ChatMessage", back_populates="chatroom", passive_deletes=True)
