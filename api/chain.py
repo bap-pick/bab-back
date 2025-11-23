@@ -1,18 +1,28 @@
 import re
 import random 
-from typing import List
+from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 import google.genai as genai
 from google.genai import types
 from langchain_chroma import Chroma
 from core.config import GEMMA_API_KEY
 from core.models import ChatMessage, Restaurant
+from core.geo import calculate_distance
 from api.saju import _get_oheng_analysis_data
 from saju.message_generator import define_oheng_messages
 from vectordb.vectordb_util import get_embeddings, get_chroma_client, COLLECTION_NAME_RESTAURANTS
 
 client = genai.Client(api_key=GEMMA_API_KEY)
 model_name = "gemma-3-4b-it"
+
+embeddings = get_embeddings()
+chroma_client = get_chroma_client()
+
+vectorstore_restaurants = Chroma(
+    client=chroma_client,
+    collection_name=COLLECTION_NAME_RESTAURANTS,
+    embedding_function=embeddings
+)
 
 # 오행별 음식 목록
 OHAENG_FOOD_LISTS = {
@@ -52,6 +62,18 @@ OHAENG_FOOD_LISTS = {
     ],
 }
 
+# 오행별 일반화 설명
+OHAENG_DESCRIPTION = {
+    "목(木)": "상큼하고 신선한 느낌의 음식, 야채가 들어간 가벼운 메뉴",
+    "화(火)": "매콤하거나 자극적인 맛의 음식",
+    "토(土)": "든든하고 안정감 있는 음식",
+    "금(金)": "고소하고 짭짤한 맛의 음식",
+    "수(水)": "시원하고 촉촉한 느낌의 음식, 국물이나 음료류"
+}
+
+MAX_MESSAGES = 10  # 최근 대화 10개만 기억
+
+
 # 오행별 음식 목록에서 랜덤으로 count개만큼만 문자열로 반환
 def get_food_recommendations_for_ohaeng(oheng: str, count: int = 3) -> str:
     foods = OHAENG_FOOD_LISTS.get(oheng)
@@ -61,15 +83,6 @@ def get_food_recommendations_for_ohaeng(oheng: str, count: int = 3) -> str:
 def normalize_to_hangul(oheng_name: str) -> str:
     return re.sub(r'\([^)]*\)', '', oheng_name).strip()
 
-
-# 오행별 일반화 설명
-OHAENG_DESCRIPTION = {
-    "목(木)": "상큼하고 신선한 느낌의 음식, 야채가 들어간 가벼운 메뉴",
-    "화(火)": "매콤하거나 자극적인 맛의 음식",
-    "토(土)": "든든하고 안정감 있는 음식",
-    "금(金)": "고소하고 짭짤한 맛의 음식",
-    "수(水)": "시원하고 촉촉한 느낌의 음식, 국물이나 음료류"
-}
 
 # 상세 추천 메시지 생성 함수
 def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], control_oheng: List[str]) -> str:
@@ -128,7 +141,7 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
     final_message = lacking_advice + control_advice + "<br>여기서 먹고 싶은 메뉴 하나 고르면 식당까지 바로 추천해줄게!"
     return final_message
 
-# 첫 메시지 생성 - 오행 기반 상세 메시지만
+# 첫 메시지 생성 - 오행 기반 추천 메시지만
 async def get_initial_chat_message(uid: str, db: Session) -> str:
     # 사주 데이터 불러오기
     lacking_oheng, strong_oheng_db, oheng_type, oheng_scores = await _get_oheng_analysis_data(uid, db)
@@ -144,7 +157,6 @@ async def get_initial_chat_message(uid: str, db: Session) -> str:
     
     return initial_message
 
-MAX_MESSAGES = 10  # 최근 대화 10개만 기억
 
 # 최근 대화 10개를 문자열로 변환
 def build_conversation_history(db: Session, chatroom_id: int) -> str:
@@ -195,26 +207,27 @@ def get_latest_recommended_foods(db: Session, chatroom_id: int) -> List[str]:
     # 적절한 메뉴 목록을 찾지 못했다면 빈 리스트 반환
     return []
 
+NO_RESULT_TEMPLATE = {
+    "message": "아쉽게도 **{menu_name}** 메뉴를 파는 식당을 주변 5km 내에서 찾지 못했어. 😢\n\n다른 메뉴를 추천해줄까?",
+    "restaurants": [],
+    "count": 0
+}
+    
+def build_no_result(menu_name: str):
+    data = NO_RESULT_TEMPLATE.copy()
+    data["message"] = data["message"].format(menu_name=menu_name)
+    return data
+
 # 유사도 검색 - 식당 정보 검색 및 추천 함수
-def search_and_recommend_restaurants(menu_name: str, db: Session):
-    # 1. ChromaDB 연결
-    embeddings = get_embeddings()
-    chroma_client = get_chroma_client()
+def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float, lon: float, action_type: str) -> Dict[str, Any]:    
+    # 검색 쿼리 정의: 사용자가 선택한 메뉴
+    query_text = menu_name
 
-    vectorstore_restaurants = Chroma(
-        client=chroma_client,
-        collection_name=COLLECTION_NAME_RESTAURANTS,
-        embedding_function=embeddings
-    )
-
-    search_query = f"'{menu_name}' 메뉴를 판매하는 맛집 식당"
-
-    # 2. 유사도 검색
+    # 2. 벡터DB 유사도 검색
     try:
-        restaurant_docs = vectorstore_restaurants.similarity_search(search_query, k=10)
+        restaurant_docs = vectorstore_restaurants.similarity_search(query_text, k=50)
     except Exception as e:
         print(f"Chroma 검색 오류: {e}")
-
         return {
             "initial_message": "식당 검색 중 오류가 발생했어.",
             "restaurants": [],
@@ -224,82 +237,115 @@ def search_and_recommend_restaurants(menu_name: str, db: Session):
 
     # 3. 검색 결과 없음
     if not restaurant_docs:
-        return {
-            "initial_message": f"아쉽게도 **{menu_name}** 메뉴를 파는 식당을 찾지 못했어.",
-            "restaurants": [],
-            "final_message": "다른 메뉴도 추천해줄까?",
-            "count": 0
-        }
+        return build_no_result(menu_name)
 
-    # 4. 3개 필터링
-    validated_restaurants = []
+
+    # 4. 메뉴명 기반 필터링 (content나 metadata에 메뉴명이 있는지 확인)
+    restaurant_ids_from_chroma = []
+    chroma_results_map = {}
+    
+    menu_name_normalized = menu_name.replace(" ", "").lower()  # 공백 제거, 소문자 변환
+    
     for doc in restaurant_docs:
-        content = doc.page_content.strip()
-        menu_snippet = doc.metadata.get("menu", "")
+        restaurant_id = doc.metadata.get("restaurant_id")
+        if not restaurant_id:
+            continue
+        
+        # 중복 체크
+        if restaurant_id in restaurant_ids_from_chroma:
+            continue
+            
+        # 메뉴명 매칭 검증
+        content = doc.page_content.replace(" ", "").lower()
+        menu_metadata = doc.metadata.get("menu", "").replace(" ", "").lower()
+        
+        # 메뉴명이 content나 menu 메타데이터에 포함되어 있는지 확인
+        if menu_name_normalized in content or menu_name_normalized in menu_metadata:
+            restaurant_ids_from_chroma.append(restaurant_id)
+            chroma_results_map[restaurant_id] = doc
+            
+    print(f"[DEBUG] 메뉴명 필터링 후: {len(restaurant_ids_from_chroma)}개 식당")
 
-        if menu_name in content or menu_name in menu_snippet:
-            validated_restaurants.append(doc)
-            if len(validated_restaurants) >= 3:
-                break
+    # 5. 필터링 후 결과 없음
+    if not restaurant_ids_from_chroma:
+        return build_no_result(menu_name)
 
-    # 필터 후 없음
-    if not validated_restaurants:
-        return {
-            "initial_message": f"아쉽게도 **{menu_name}** 메뉴를 파는 식당을 찾지 못했어.",
-            "restaurants": [],
-            "final_message": "다른 메뉴도 추천해줄까?",
-            "count": 0
-        }
-
-    # 5. 식당 ID로 MySQL 정보 가져오기
-    restaurant_ids = [doc.metadata.get("restaurant_id") for doc in validated_restaurants]
-    valid_ids = [id for id in restaurant_ids if id is not None]
-
-    mysql_restaurants = db.query(Restaurant).filter(Restaurant.id.in_(valid_ids)).all()
-    id_to_mysql_restaurant = {r.id: r for r in mysql_restaurants}
-
-    # 6. 결과 정제
-    restaurant_data_list = []
-
-    for doc in validated_restaurants[:5]:
-        metadata = doc.metadata
-        restaurant_id = metadata.get("restaurant_id")
-
-        mysql_data = id_to_mysql_restaurant.get(restaurant_id)
-        image_url = None
-
-        # 이미지 처리
-        if mysql_data and mysql_data.image:
-            image_links = mysql_data.image.split(',')
+        
+    # 6. DB에서 식당 정보 조회
+    db_restaurants_list = db.query(Restaurant).filter(
+        Restaurant.id.in_(restaurant_ids_from_chroma)
+    ).all()
+    
+    db_restaurants_map = {r.id: r for r in db_restaurants_list}
+    print(f"[DEBUG] DB 조회 완료: {len(db_restaurants_list)}개 식당 정보")
+    
+    # 7. 거리 계산, 이미지 처리, 필터링 및 데이터 통합
+    temp_restaurants_with_distance = []
+    MAX_DISTANCE_KM = 5.0  # 최대 검색 반경 5km
+    
+    for restaurant_id, doc in chroma_results_map.items():
+        restaurant = db_restaurants_map.get(restaurant_id)
+        
+        if not restaurant:
+            continue
+            
+        # 좌표를 DB 모델 객체에서 가져옵니다.
+        rest_lat = getattr(restaurant, 'latitude', None)
+        rest_lon = getattr(restaurant, 'longitude', None)
+        
+        if rest_lat is None or rest_lon is None:
+            print(f"[DEBUG] 좌표 없음: {restaurant.name}")
+            continue
+            
+        # 거리 계산 및 필터링
+        distance_km = calculate_distance(lat, lon, rest_lat, rest_lon)
+        
+        if distance_km > MAX_DISTANCE_KM:
+            continue
+            
+        distance_m = int(round(distance_km * 1000))
+        
+        processed_image_url = None
+        if restaurant.image:
+            image_links = restaurant.image.split(',')
             first_link = image_links[0].strip()
 
             if first_link.startswith(("'", '"')) and first_link.endswith(("'", '"')):
                 first_link = first_link[1:-1]
 
             if first_link:
-                image_url = first_link
+                processed_image_url = first_link
+                
+        restaurant_data = {
+            "id": restaurant.id,
+            "name": restaurant.name,
+            "category": restaurant.category,
+            "address": restaurant.address,
+            "lat": rest_lat,
+            "lon": rest_lon,
+            "distance_km": round(distance_km, 2), 
+            "distance_m": distance_m,              
+            "description": doc.page_content, 
+            "image": processed_image_url,
+        }
+        temp_restaurants_with_distance.append(restaurant_data)
+    
+    # 8. 거리순 정렬 및 최종 목록 추출
+    temp_restaurants_with_distance.sort(key=lambda x: x["distance_km"])
+    recommended_restaurants = temp_restaurants_with_distance[:3]
+    
+    print(f"[DEBUG] 최종 추천: {len(recommended_restaurants)}개 식당")
 
-        menu_snippet = metadata.get("menu", "메뉴 정보 없음").split(', ')[:3]
-
-        restaurant_data_list.append({
-            "name": metadata.get("place_name", mysql_data.name if mysql_data else "이름 없음"),
-            "address": metadata.get("road_address_name", mysql_data.address if mysql_data else "주소 없음"),
-            "category": metadata.get("category_group_name", mysql_data.category if mysql_data else "카테고리 없음"),
-            "menu_snippet": menu_snippet,
-            "image_url": image_url,
-            "id": restaurant_id
-        })
-
-    # 7. 최종 반환 payload
-    final_payload = {
-        "initial_message": f"그러면 **{menu_name}**을(를) 파는 식당을 추천해줄게! 😋",
-        "restaurants": restaurant_data_list,
-        "final_message": "다른 행운의 맛집도 추천해줄까?",
-        "count": len(restaurant_data_list)
-    }
-
-    return final_payload
-
+    # 9. 최종 응답 구성
+    if recommended_restaurants:
+        return {
+            "initial_message": f"그러면 **{menu_name}** 먹으러 갈 식당 추천해줄게! 😋",
+            "restaurants": recommended_restaurants,
+            "final_message": "다른 행운의 맛집도 추천해줄까?",
+            "count": len(recommended_restaurants)
+        }
+    else:
+        return build_no_result(menu_name)
 
 # 단체 채팅에서 사용자 메시지가 메뉴 추천 요청인지 감지하는 함수
 def is_initial_recommendation_request(user_message: str, conversation_history: str) -> bool:
@@ -324,11 +370,7 @@ def is_initial_recommendation_request(user_message: str, conversation_history: s
 
 
 # llm 호출 및 응답 반환
-def generate_llm_response(conversation_history: str, user_message: str, current_recommended_foods: List[str]) -> str:
-    # 지금까지 추천한 메뉴 목록을 문자열로 변환
-    current_foods_str = ', '.join(current_recommended_foods)
-    print(f"[DEBUG] current_recommended_foods: {current_foods_str}")
-
+def generate_llm_response(conversation_history: str, user_message: str) -> str:
     prompt = f"""
     너는 오늘의 운세와 오행 기운에 맞춰 음식을 추천해주는 챗봇 '밥풀이'야. 
     너의 목표는 사용자의 운세에 부족한 오행 기운을 채워줄 수 있는 음식을 추천하는 거야. 

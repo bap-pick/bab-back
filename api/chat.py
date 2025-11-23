@@ -3,15 +3,16 @@ import json
 import datetime
 import pytz
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status,  WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from core.db import get_db
-from core.models import ChatRoom, ChatMessage, ChatroomMember, User
+from core.models import ChatRoom, ChatMessage, ChatroomMember, User, Restaurant
 from core.firebase_auth import verify_firebase_token, get_user_uid_from_websocket_token
-from api.chain import build_conversation_history, generate_llm_response, get_initial_chat_message, search_and_recommend_restaurants, get_latest_recommended_foods, is_initial_recommendation_request
 from core.websocket_manager import ConnectionManager, get_connection_manager
+from api.chain import build_conversation_history, generate_llm_response, get_initial_chat_message, search_and_recommend_restaurants, get_latest_recommended_foods, is_initial_recommendation_request
+
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -32,6 +33,200 @@ class ChatRoomCreateRequest(BaseModel):
 
 Chat_rooms = {}
 
+# 가장 최근에 선택한 메뉴명 추출
+def get_latest_selected_menu(db: Session, room_id: int) -> Optional[str]:
+    chatroom = db.query(ChatRoom).filter(ChatRoom.id == room_id).first()
+    
+    if chatroom:
+        return chatroom.selected_menu
+    return None
+
+# 메뉴 선택 시 위치 선택 메시지 출력 
+def process_menu_selection(db: Session, chatroom: ChatRoom, llm_output: str) -> Optional[dict]:
+    menu_name_match = re.search(r"\[MENU_SELECTED:(.+?)\]", llm_output)
+    if not menu_name_match:
+        return None
+    
+    selected_menu = menu_name_match.group(1).strip()
+
+    chatroom.selected_menu = selected_menu
+    db.add(chatroom)
+    db.commit()
+    
+    # 위치 선택 프롬프트 메시지 생성
+    assistant_reply = f"그러면 {selected_menu} 먹으러 갈 식당 추천해줄게! 위치는 어디로 할까?"
+    message_type = "location_select"
+    
+    # DB 저장 (extra_data는 JSON 문자열로 변환하여 저장)
+    assistant_message = ChatMessage(
+        room_id=chatroom.id,
+        sender_id="assistant",
+        role="assistant",
+        content=assistant_reply,
+        message_type=message_type, 
+        timestamp=datetime.datetime.utcnow(),
+    )
+    db.add(assistant_message)
+    db.commit()
+    db.refresh(assistant_message)
+        
+    chatroom.last_message_id = assistant_message.id 
+    db.add(chatroom)
+    db.commit()
+        
+    # 3. 프론트엔드 반환 형식 구성 (Post API와 WebSocket 모두 사용 가능하도록 dict 반환)
+    return {
+        "id": assistant_message.id,
+        "role": "assistant",
+        "message_type": message_type,
+        "content": assistant_reply
+    }
+    
+# 위치 선택 후 식당 검색 수행 (LOCATION_SELECTED 태그가 있는 경우)
+def process_location_selection_tag(db: Session, chatroom: ChatRoom, user_message_content: str, user_message_id: int) -> Optional[Dict[str, Any]]:
+    
+    location_selection_regex = re.compile(r"\[LOCATION_SELECTED:(SAVED_LOCATION|CURRENT_LOCATION|MANUAL_LOCATION)\]\|(-?\d+\.\d+)\|(-?\d+\.\d+)")
+    match = location_selection_regex.match(user_message_content)
+
+    if not match:
+        return None
+        
+    # 1. 사용자가 정한 주소의 위도, 경도
+    action_type = match.group(1).strip()
+    lat = float(match.group(2))
+    lon = float(match.group(3))
+    
+    # 2. ChatRoom에서 제일 최근 선택한 메뉴 조회
+    selected_menu = get_latest_selected_menu(db, chatroom.id)
+
+    # 3. 식당 검색 및 추천 데이터 생성
+    print(f"[DEBUG] 식당 검색 시작: 메뉴={selected_menu}, 위도={lat}, 경도={lon}")
+    restaurant_data = search_and_recommend_restaurants(selected_menu, db, lat, lon, action_type)
+    
+    # 4. 검색 결과 확인
+    restaurants = restaurant_data.get("restaurants", [])
+    
+    if not restaurants or len(restaurants) == 0:        
+        # 검색 실패 메시지 생성
+        no_result_msg = restaurant_data["message"]
+
+        # DB에 저장
+        no_result_message = ChatMessage(
+            room_id=chatroom.id,
+            sender_id="assistant",
+            role="assistant",
+            content=no_result_msg,
+            message_type="text",
+            timestamp=datetime.datetime.utcnow()
+        )
+        db.add(no_result_message)
+        db.commit()
+        db.refresh(no_result_message)
+        
+        # ChatRoom 상태 초기화
+        chatroom.selected_menu = None
+        chatroom.last_message_id = no_result_message.id
+        db.add(chatroom)
+        db.commit()
+        
+        return {
+            "replies": [{
+                "id": no_result_message.id,
+                "role": "assistant",
+                "message_type": "text",
+                "content": no_result_msg
+            }],
+            "user_message_id": user_message_id
+        }
+        
+    # 5. 검색 결과가 있을 때: ChatRoom 상태 초기화
+    print(f"[DEBUG] 식당 검색 성공: {len(restaurants)}개 발견")
+    chatroom.selected_menu = None
+    db.add(chatroom)
+    db.commit() 
+
+    # 6. 메시지 데이터 준비
+    initial_msg_content = restaurant_data.get("initial_message", f"그러면 {selected_menu} 먹으러 갈 식당을 추천해줄게! 😋")
+    final_msg_content = restaurant_data.get("final_message", "다른 행운의 맛집도 추천해줄까?")
+    
+    card_data = {
+        "restaurants": restaurant_data.get("restaurants", []),
+        "count": restaurant_data.get("count", 0)
+    }
+    card_msg_content = json.dumps(card_data, ensure_ascii=False)
+
+    
+    # 7. DB에 3가지 메시지 순차적으로 저장
+    # 1) initial_message 저장
+    initial_message = ChatMessage(
+        room_id=chatroom.id,
+        sender_id="assistant",
+        role="assistant",
+        content=initial_msg_content,
+        message_type="text",
+        timestamp=datetime.datetime.utcnow() 
+    )
+    db.add(initial_message)
+
+    # 2) 추천 식당 리스트 저장 (restaurant_cards)
+    card_message = ChatMessage(
+        room_id=chatroom.id,
+        sender_id="assistant",
+        role="assistant",
+        content=card_msg_content,
+        message_type="restaurant_cards",
+        timestamp=datetime.datetime.utcnow() + datetime.timedelta(seconds=1) 
+    )
+    db.add(card_message)
+
+    # 3) final_message 저장
+    final_message = ChatMessage(
+        room_id=chatroom.id,
+        sender_id="assistant",
+        role="assistant",
+        content=final_msg_content,
+        message_type="text",
+        timestamp=datetime.datetime.utcnow() + datetime.timedelta(seconds=2)
+    )
+    db.add(final_message)
+        
+    # DB 커밋: 모든 메시지 한 번에 저장
+    db.commit() 
+    db.refresh(initial_message)
+    db.refresh(card_message)
+    db.refresh(final_message)
+        
+    # 마지막 메시지 ID 업데이트
+    chatroom.last_message_id = final_message.id 
+    db.add(chatroom)
+    db.commit()
+        
+    # 8. 프론트엔드 반환 형식 구성
+    return {
+        "replies": [
+            {
+                "id": initial_message.id,
+                "role": "assistant", 
+                "message_type": "text", 
+                "content": initial_msg_content
+            },
+            {
+                "id": card_message.id,
+                "role": "assistant",
+                "message_type": "restaurant_cards",
+                "content": card_msg_content
+            },
+            {
+                "id": final_message.id,
+                "role": "assistant", 
+                "message_type": "text", 
+                "content": final_msg_content
+            },
+        ],
+        "user_message_id": user_message_id
+    }
+    
+    
 # 메시지 객체를 JSON 형태로 변환 (WebSocket 브로드캐스트용)
 def chat_message_to_json(msg: ChatMessage, sender_name: str, current_user_uid: str, sender_profile_url: Optional[str] = None) -> dict:
     is_me = msg.sender_id == current_user_uid 
@@ -174,7 +369,10 @@ async def handle_websocket_message(
     if not chatroom:
         return
     
-    # 2. 사용자 메시지 DB 저장
+    # 2. 위치 선택 메시지인지 먼저 확인 
+    is_location_message = message_content.startswith('[LOCATION_SELECTED:')
+    
+    # 3. 사용자 메시지 DB 저장
     chat_message = ChatMessage(
         room_id=room_id,
         sender_id=uid,
@@ -188,27 +386,51 @@ async def handle_websocket_message(
 
     sender_profile_url = user.profile_image 
     
-    # 3. 사용자 메시지 브로드캐스트
-    user_msg_json = chat_message_to_json(chat_message, user.nickname, uid, sender_profile_url)
-    await manager.broadcast(
-        room_id, 
-        json.dumps({"type": "new_message", "message": user_msg_json})
-    )
+    # 4. 위치 선택 메시지가 아닐 때만 사용자 메시지 브로드캐스트
+    if not is_location_message:
+        user_msg_json = chat_message_to_json(chat_message, user.nickname, uid, sender_profile_url)
+        await manager.broadcast(
+            room_id, 
+            json.dumps({"type": "new_message", "message": user_msg_json})
+        )
 
-    # 4. 챗봇 호출 여부 결정
+    # 5. 위치 선택 메시지 처리 (LLM 호출 전에 처리)
+    if is_location_message:        
+        location_result = process_location_selection_tag(db, chatroom, message_content, chat_message.id)
+        
+        if location_result and location_result.get("replies"):
+            # 식당 추천 결과를 순차적으로 브로드캐스트
+            for reply_msg in location_result["replies"]:
+                # DB에서 저장된 메시지 조회
+                db_message = db.query(ChatMessage).filter(
+                    ChatMessage.id == reply_msg["id"]
+                ).first()
+                
+                if db_message:
+                    bot_msg_json = chat_message_to_json(
+                        db_message,
+                        "밥풀이",
+                        uid
+                    )
+                    await manager.broadcast(
+                        room_id,
+                        json.dumps({"type": "new_message", "message": bot_msg_json})
+                    )
+            return
+
+    # 6. 챗봇 호출 여부 결정
     MENTION_TAG = "@밥풀이"
     is_llm_triggered = (not chatroom.is_group) or (
         chatroom.is_group and MENTION_TAG in message_content
     )
     
     if not is_llm_triggered:
-        # LLM 호출 없이 종료
         chatroom.last_message_id = chat_message.id
         db.add(chatroom)
         db.commit()
         return
     
-    # 5. LLM 호출 및 응답 처리
+    # 7. LLM 호출 및 응답 처리
     try:
         # 멘션 태그 제거
         user_message_for_llm = message_content
@@ -259,18 +481,28 @@ async def handle_websocket_message(
             current_recommended_foods=current_foods
         )
         
-        # 메뉴 선택 여부 확인
-        menu_match = re.search(r"\[MENU_SELECTED:(.+?)\]", llm_output.strip())
+        # 메뉴 선택 시 위치 설정 메시지 출력
+        location_select_reply = process_menu_selection(db, chatroom, llm_output)
         
-        if menu_match:
-            # 식당 추천 응답 처리
-            await handle_restaurant_recommendation(
-                room_id=room_id,
-                selected_menu=menu_match.group(1).strip(),
-                db=db,
-                manager=manager,
-                chatroom=chatroom
+        if location_select_reply:
+            # DB에 저장된 메시지 (location_select 타입)를 조회하여 ID/Timestamp 확보
+            assistant_message = db.query(ChatMessage).filter(
+                ChatMessage.id == chatroom.last_message_id
+            ).first()
+            
+            # 봇 응답 브로드캐스트 (location_select 메시지)
+            bot_msg_json = chat_message_to_json(
+                assistant_message, 
+                "밥풀이", 
+                uid
             )
+
+            await manager.broadcast(
+                room_id,
+                json.dumps({"type": "new_message", "message": bot_msg_json})
+            )
+            return
+        
         else:
             # 일반 텍스트 응답 처리
             assistant_message = ChatMessage(
@@ -310,7 +542,6 @@ async def handle_websocket_message(
                 "message": "메시지 처리 중 오류가 발생했습니다."
             })
         )
-
 
 # 웹소켓 엔드포인트
 @router.websocket("/ws/{room_id}")
@@ -694,13 +925,11 @@ async def send_message(
     )
     # 모든 클라이언트에게 메시지를 즉시 전송
     await manager.broadcast(chatroom.id, json.dumps({"type": "new_message", "message": user_msg_json}))
-    
+        
     # 챗봇 호출 여부 결정
     MENTION_TAG = "@밥풀이"
     
-    # LLM 호출 조건
-    # A) 1:1 채팅인 경우 (not chatroom.is_group)
-    # B) 그룹 채팅이면서 멘션 태그가 포함된 경우 (chatroom.is_group and MENTION_TAG in request.message)
+    # LLM 호출 조건: 1:1 채팅 / 그룹 채팅이면서 멘션 태그가 포함된 경우
     is_llm_triggered = (not chatroom.is_group) or (chatroom.is_group and MENTION_TAG in request.message)
     
     # LLM 호출하지 않는 경우 (그룹 채팅 + 멘션 없음)
@@ -709,15 +938,21 @@ async def send_message(
         db.add(chatroom)
         db.commit()
         return {"message": "메시지 전송 완료 (LLM 미호출)", "user_message_id": chat_message.id}
-    
-    # LLM 호출하는 경우
+            
     try:
+        user_message_content = request.message
+        location_select_result = process_location_selection_tag(db, chatroom, user_message_content, chat_message.id)
+        
+        if location_select_result:
+            # 태그가 발견되면 식당 추천 로직 실행 후 즉시 반환 (LLM 호출하지 않음)
+            return location_select_result
+    
         # 멘션 태그 제거
         user_message_for_llm = request.message
         if chatroom.is_group:
             # 그룹 채팅일 경우에만 멘션 태그를 제거하여 LLM에 전달
             user_message_for_llm = request.message.replace(MENTION_TAG, "").strip()
-            
+        
         # 1) 기존 대화 내역 불러오기
         conversation_history = build_conversation_history(db, chatroom.id)
         
@@ -725,92 +960,16 @@ async def send_message(
         current_foods = get_latest_recommended_foods(db, chatroom.id)
         
         # 3) LLM 호출
-        #llm_output = generate_llm_response(conversation_history, request.message, current_recommended_foods=current_foods)
         llm_output = generate_llm_response(conversation_history, user_message_for_llm, current_recommended_foods=current_foods)
         
-        # 4) 응답에 MENU_SELECTED 태그가 있는 경우 사용자가 특정 메뉴를 선택한 것으로 간주
-        menu_match = re.search(r"\[MENU_SELECTED:(.+?)\]", llm_output.strip())
-
-        # 사용자가 특정 메뉴를 선택한 경우 식당 추천 답변
-        if menu_match:
-            selected_menu = menu_match.group(1).strip()
-            # 식당 유사도 검색 함수 호출
-            restaurant_data = search_and_recommend_restaurants(selected_menu, db)
-
-            # DB에 LLM 답변 저장
-            # 1) initial_message (그러면 **{menu_name}**을(를) 파는 식당을 추천해줄게! 😋) 저장
-            initial_msg_content = restaurant_data.get("initial_message")
-            initial_message = ChatMessage(
-                room_id=chatroom.id,
-                sender_id="assistant",
-                role="assistant",
-                content=initial_msg_content,
-                message_type="text",
-                timestamp=datetime.datetime.utcnow() 
-            )
-            db.add(initial_message)
-
-            # 2) 추천 식당 리스트 저장
-            card_data = {
-                "restaurants": restaurant_data.get("restaurants", []),
-                "count": restaurant_data.get("count", 0)
-            }
-            card_msg_content = json.dumps(card_data, ensure_ascii=False)
-            
-            card_message = ChatMessage(
-                room_id=chatroom.id,
-                sender_id="assistant",
-                role="assistant",
-                content=card_msg_content,
-                message_type="restaurant_cards",
-                timestamp=datetime.datetime.utcnow() + datetime.timedelta(seconds=1) 
-            )
-            db.add(card_message)
-
-            # 3) final_message (다른 행운의 맛집도 추천해줄까?) 저장
-            final_msg_content = restaurant_data.get("final_message")
-            final_message = ChatMessage(
-                room_id=chatroom.id,
-                sender_id="assistant",
-                role="assistant",
-                content=final_msg_content,
-                message_type="text",
-                timestamp=datetime.datetime.utcnow() + datetime.timedelta(seconds=2)
-            )
-            db.add(final_message)
-            
-            # DB 커밋: 모든 메시지 한 번에 저장
-            db.commit() 
-            db.refresh(initial_message)
-            db.refresh(card_message)
-            db.refresh(final_message)
-            
-            # 마지막 메시지 ID 업데이트 (가장 마지막 메시지인 final_message의 ID 사용)
-            chatroom.last_message_id = final_message.id 
-            db.add(chatroom)
-            db.commit()
-            
+        # 메뉴 선택
+        location_select_reply = process_menu_selection(db, chatroom, llm_output)
+        if location_select_reply:
             return {
-                "replies": [
-                    {
-                        "role": "assistant", 
-                        "message_type": "text", 
-                        "content": initial_msg_content # 초기 메시지 텍스트
-                    },
-                    {
-                        "role": "assistant",
-                        "message_type": "restaurant_cards",
-                        "content": card_msg_content # 추천 식당 데이터 JSON 문자열
-                    },
-                    {
-                        "role": "assistant", 
-                        "message_type": "text", 
-                        "content": final_msg_content # 종료 메시지 텍스트
-                    },
-                ],
+                "reply": location_select_reply,
                 "user_message_id": chat_message.id
             }
-                        
+        
         # 식당 추천 이외의 다른 답변
         else:
             # 일반 텍스트 응답
