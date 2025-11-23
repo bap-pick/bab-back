@@ -1,14 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from pydantic import BaseModel
 from datetime import time
-from math import radians, sin, cos, sqrt, atan2
-
 from core.firebase_auth import verify_firebase_token
 from core.db import get_db
 from core.models import Restaurant, RestaurantFacility, Reviews
+from core.geo import calculate_distance
 
 router = APIRouter(prefix="/restaurants", tags=["restaurants"])
 
@@ -112,21 +111,14 @@ def get_nearby_restaurants(
     
     results = query.all()
 
-    def haversine(lat1, lon1, lat2, lon2):
-        R = 6371.0  # 지구 반경(km)
-        dlat = radians(lat2 - lat1)
-        dlon = radians(lon2 - lon1)
-        a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
-        c = 2 * atan2(sqrt(a), sqrt(1 - a))
-        return R * c  # 단위: km
-
     nearby_with_distance = []
     for restaurant, rating_value, count_value in results:
         # DB에 위도/경도 데이터가 없는 식당은 제외
         if restaurant.latitude is None or restaurant.longitude is None:
             continue
-            
-        distance_km = haversine(lat, lon, restaurant.latitude, restaurant.longitude)
+        
+        # 사용자가 설정한 위치와 식당 위치 간 거리 계산
+        distance_km = calculate_distance(lat, lon, restaurant.latitude, restaurant.longitude)
         
         # 1km 이내 식당만 필터링
         if distance_km > 1.0: 
