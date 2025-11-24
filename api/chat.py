@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, status,  WebSocket, WebSo
 from sqlalchemy.orm import Session, joinedload
 from pydantic import BaseModel
 from core.db import get_db
-from core.models import ChatRoom, ChatMessage, ChatroomMember, User, Restaurant
+from core.models import ChatRoom, ChatMessage, ChatroomMember, User
 from core.firebase_auth import verify_firebase_token, get_user_uid_from_websocket_token
 from core.websocket_manager import ConnectionManager, get_connection_manager
-from api.chain import build_conversation_history, generate_llm_response, get_initial_chat_message, search_and_recommend_restaurants, get_latest_recommended_foods, is_initial_recommendation_request
+from api.chain import build_conversation_history, generate_llm_response, get_initial_chat_message, recommend_restaurants, is_initial_recommendation_request
 
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -31,7 +31,6 @@ class ChatRoomCreateRequest(BaseModel):
     is_group: bool = False
     invited_uids: Optional[List[str]] = None # 초대한 사용자 목록
 
-Chat_rooms = {}
 
 # 가장 최근에 선택한 메뉴명 추출
 def get_latest_selected_menu(db: Session, room_id: int) -> Optional[str]:
@@ -54,7 +53,7 @@ def process_menu_selection(db: Session, chatroom: ChatRoom, llm_output: str) -> 
     db.commit()
     
     # 위치 선택 프롬프트 메시지 생성
-    assistant_reply = f"그러면 {selected_menu} 먹으러 갈 식당 추천해줄게! 위치는 어디로 할까?"
+    assistant_reply = f"그러면 {selected_menu} 먹으러 갈 식당 추천해줄게! 위치는 어디로 할까?\n\n 원하는 위치를 입력하거나 아래 버튼 중 하나를 골라줘!"
     message_type = "location_select"
     
     # DB 저장 (extra_data는 JSON 문자열로 변환하여 저장)
@@ -74,7 +73,6 @@ def process_menu_selection(db: Session, chatroom: ChatRoom, llm_output: str) -> 
     db.add(chatroom)
     db.commit()
         
-    # 3. 프론트엔드 반환 형식 구성 (Post API와 WebSocket 모두 사용 가능하도록 dict 반환)
     return {
         "id": assistant_message.id,
         "role": "assistant",
@@ -101,7 +99,7 @@ def process_location_selection_tag(db: Session, chatroom: ChatRoom, user_message
 
     # 3. 식당 검색 및 추천 데이터 생성
     print(f"[DEBUG] 식당 검색 시작: 메뉴={selected_menu}, 위도={lat}, 경도={lon}")
-    restaurant_data = search_and_recommend_restaurants(selected_menu, db, lat, lon, action_type)
+    restaurant_data = recommend_restaurants(selected_menu, db, lat, lon)
     
     # 4. 검색 결과 확인
     restaurants = restaurant_data.get("restaurants", [])
@@ -254,7 +252,7 @@ async def handle_restaurant_recommendation(
     chatroom: ChatRoom
 ):    
     # 식당 검색
-    restaurant_data = search_and_recommend_restaurants(selected_menu, db)
+    restaurant_data = recommend_restaurants(selected_menu, db)
     
     # 1) 초기 메시지
     initial_msg_content = restaurant_data.get("initial_message")
@@ -474,12 +472,8 @@ async def handle_websocket_message(
             return
         
         # 일반적인 LLM 호출 (초기 추천이 아닌 경우)
-        current_foods = get_latest_recommended_foods(db, room_id)
-        llm_output = generate_llm_response(
-            conversation_history, 
-            user_message_for_llm, 
-            current_recommended_foods=current_foods
-        )
+        #current_foods = get_latest_recommended_foods(db, room_id)
+        llm_output = generate_llm_response(conversation_history, user_message_for_llm)
         
         # 메뉴 선택 시 위치 설정 메시지 출력
         location_select_reply = process_menu_selection(db, chatroom, llm_output)
@@ -697,7 +691,6 @@ async def create_chatroom(
     db.commit()
 
     room_id_str = str(chatroom.id)
-    Chat_rooms[room_id_str] = []
     
     return {
         "message": "채팅방 생성 완료",
@@ -940,6 +933,7 @@ async def send_message(
         return {"message": "메시지 전송 완료 (LLM 미호출)", "user_message_id": chat_message.id}
             
     try:
+        # 사용자가 위치를 반환한 경우 (메뉴 선택 > 위치 선택 > 식당 추천) 
         user_message_content = request.message
         location_select_result = process_location_selection_tag(db, chatroom, user_message_content, chat_message.id)
         
@@ -947,6 +941,7 @@ async def send_message(
             # 태그가 발견되면 식당 추천 로직 실행 후 즉시 반환 (LLM 호출하지 않음)
             return location_select_result
     
+        # 사용자가 위치를 반환하지 않은 경우 LLM 호출
         # 멘션 태그 제거
         user_message_for_llm = request.message
         if chatroom.is_group:
@@ -956,11 +951,8 @@ async def send_message(
         # 1) 기존 대화 내역 불러오기
         conversation_history = build_conversation_history(db, chatroom.id)
         
-        # 2) 현재 음식 추천 목록 전달        
-        current_foods = get_latest_recommended_foods(db, chatroom.id)
-        
         # 3) LLM 호출
-        llm_output = generate_llm_response(conversation_history, user_message_for_llm, current_recommended_foods=current_foods)
+        llm_output = generate_llm_response(conversation_history, user_message_for_llm)
         
         # 메뉴 선택
         location_select_reply = process_menu_selection(db, chatroom, llm_output)

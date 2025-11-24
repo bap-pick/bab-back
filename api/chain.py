@@ -80,16 +80,13 @@ def get_food_recommendations_for_ohaeng(oheng: str, count: int = 3) -> str:
     recommended_foods = random.sample(foods, min(count, len(foods)))
     return ', '.join(recommended_foods)
 
-def normalize_to_hangul(oheng_name: str) -> str:
-    return re.sub(r'\([^)]*\)', '', oheng_name).strip()
 
-
-# 상세 추천 메시지 생성 함수
+# 오행 기반 메뉴 추천 메시지 생성
 def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], control_oheng: List[str]) -> str:
     # 한글 이름을 키로, 전체 오행 이름(한자 포함)을 값으로 하는 맵 생성
     unique_ohaeng_map = {}
     for oheng in control_oheng:
-        hangul_name = normalize_to_hangul(oheng)
+        hangul_name = re.sub(r'\([^)]*\)', '', oheng).strip()
         if hangul_name and oheng in OHAENG_FOOD_LISTS: # 유효한 키인지 확인
             unique_ohaeng_map[hangul_name] = oheng
             
@@ -141,7 +138,8 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
     final_message = lacking_advice + control_advice + "<br>여기서 먹고 싶은 메뉴 하나 고르면 식당까지 바로 추천해줄게!"
     return final_message
 
-# 첫 메시지 생성 - 오행 기반 추천 메시지만
+
+# 초기 메시지 반환
 async def get_initial_chat_message(uid: str, db: Session) -> str:
     # 사주 데이터 불러오기
     lacking_oheng, strong_oheng_db, oheng_type, oheng_scores = await _get_oheng_analysis_data(uid, db)
@@ -175,52 +173,21 @@ def build_conversation_history(db: Session, chatroom_id: int) -> str:
         conversation_history += f"{msg.content}\n"
     return conversation_history
 
-# 최근 메시지에서 추천한 메뉴 목록 반환
-def get_latest_recommended_foods(db: Session, chatroom_id: int) -> List[str]:
-    latest_bot_messages = (
-        db.query(ChatMessage) 
-        .filter(ChatMessage.room_id == chatroom_id, ChatMessage.role == "assistant")
-        .order_by(ChatMessage.timestamp.desc())
-        .limit(5)
-        .all()
-    )
 
-    pattern_rule = re.compile(r"그러면\s+(.*)\s+중\s+하나는\s+어때\?")
-    food_ohaeng_recommendation_prefix = r"(.*기운의\s+음식\s+|따라서\s+.*기운을\s+채울\s+수\s+있는\s+)"
-    pattern_ohaeng_recommendation = re.compile(food_ohaeng_recommendation_prefix + r"(.*)을\s*\(를\)\s*추천해\.")
-    
-    for msg in latest_bot_messages:
-        content = msg.content.strip()
-        
-        # 1. 규칙 2 (새로운 메뉴 3가지 추천) 패턴 확인
-        match_rule = pattern_rule.search(content)
-        if match_rule:
-            food_list_str = match_rule.group(1).strip()
-            return [f.strip() for f in food_list_str.split(',')]
-
-        # 2. 초기 오행 기반 추천 패턴 확인
-        match_recommendation = pattern_ohaeng_recommendation.search(content)
-        if match_recommendation:
-            food_list_str = match_recommendation.group(2).strip()
-            return [f.strip() for f in food_list_str.split(',')]
-            
-    # 적절한 메뉴 목록을 찾지 못했다면 빈 리스트 반환
-    return []
-
-NO_RESULT_TEMPLATE = {
-    "message": "아쉽게도 **{menu_name}** 메뉴를 파는 식당을 주변 5km 내에서 찾지 못했어. 😢\n\n다른 메뉴를 추천해줄까?",
-    "restaurants": [],
-    "count": 0
-}
-    
+# 식당 목록이 없는 경우 답변
 def build_no_result(menu_name: str):
+    NO_RESULT_TEMPLATE = {
+        "message": "아쉽게도 **{menu_name}** 메뉴를 파는 식당을 주변 2km 내에서 찾지 못했어.😢\n\n다른 메뉴를 추천해줄까?",
+        "restaurants": [],
+        "count": 0
+    }
     data = NO_RESULT_TEMPLATE.copy()
     data["message"] = data["message"].format(menu_name=menu_name)
     return data
 
-# 유사도 검색 - 식당 정보 검색 및 추천 함수
-def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float, lon: float, action_type: str) -> Dict[str, Any]:    
-    # 검색 쿼리 정의: 사용자가 선택한 메뉴
+# 식당 추천 - 사용자가 선택한 메뉴와 유사도 검색 + 사용자가 선택한 위치 2km 이내
+def recommend_restaurants(menu_name: str, db: Session, lat: float, lon: float) -> Dict[str, Any]:    
+    # 1. 검색 쿼리 정의: 사용자가 선택한 메뉴
     query_text = menu_name
 
     # 2. 벡터DB 유사도 검색
@@ -279,9 +246,9 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float, lo
     db_restaurants_map = {r.id: r for r in db_restaurants_list}
     print(f"[DEBUG] DB 조회 완료: {len(db_restaurants_list)}개 식당 정보")
     
-    # 7. 거리 계산, 이미지 처리, 필터링 및 데이터 통합
+    # 7. 거리 필터링 및 식당 이미지 조회 
     temp_restaurants_with_distance = []
-    MAX_DISTANCE_KM = 5.0  # 최대 검색 반경 5km
+    MAX_DISTANCE_KM = 2.0  # 최대 검색 반경 2km
     
     for restaurant_id, doc in chroma_results_map.items():
         restaurant = db_restaurants_map.get(restaurant_id)
@@ -289,7 +256,7 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float, lo
         if not restaurant:
             continue
             
-        # 좌표를 DB 모델 객체에서 가져옵니다.
+        # 식당 좌표를 DB에서 가져옴
         rest_lat = getattr(restaurant, 'latitude', None)
         rest_lon = getattr(restaurant, 'longitude', None)
         
@@ -302,9 +269,11 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float, lo
         
         if distance_km > MAX_DISTANCE_KM:
             continue
-            
+        
+        # km 거리를 m로 변환
         distance_m = int(round(distance_km * 1000))
         
+        # 식당 이미지: 여러 이미지 중 첫번째 이미지만
         processed_image_url = None
         if restaurant.image:
             image_links = restaurant.image.split(',')
@@ -315,7 +284,7 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float, lo
 
             if first_link:
                 processed_image_url = first_link
-                
+
         restaurant_data = {
             "id": restaurant.id,
             "name": restaurant.name,
@@ -336,7 +305,7 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float, lo
     
     print(f"[DEBUG] 최종 추천: {len(recommended_restaurants)}개 식당")
 
-    # 9. 최종 응답 구성
+    # 9. 최종 응답
     if recommended_restaurants:
         return {
             "initial_message": f"그러면 **{menu_name}** 먹으러 갈 식당 추천해줄게! 😋",
@@ -346,6 +315,7 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float, lo
         }
     else:
         return build_no_result(menu_name)
+
 
 # 단체 채팅에서 사용자 메시지가 메뉴 추천 요청인지 감지하는 함수
 def is_initial_recommendation_request(user_message: str, conversation_history: str) -> bool:
