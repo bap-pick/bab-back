@@ -24,6 +24,8 @@ class User(Base):
     day_sky = Column(String(10), nullable=True)
     
     scraps = relationship("Scrap", back_populates="user")
+    collections = relationship("Collection", back_populates="user")
+    
     chatroom_memberships = relationship("ChatroomMember", back_populates="user")
     
     # Friendships 관계 추가
@@ -191,19 +193,6 @@ class Reviews(Base):
     
     def __repr__(self):
         return f"<Reviews(id={self.id}, rating={self.rating}, restaurant_id={self.restaurant_id})>"
-
-class Scrap(Base):
-    __tablename__ = "Scraps"
-
-    user_id = Column(Integer, ForeignKey('Users.id'), primary_key=True, nullable=False)
-    restaurant_id = Column(Integer, ForeignKey('Restaurants.id'), primary_key=True, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-
-    user = relationship("User", back_populates="scraps")
-    restaurant = relationship("Restaurant", back_populates="scraps")
-
-    def __repr__(self):
-        return f"<Scrap(user_id={self.user_id}, restaurant_id={self.restaurant_id})>" 
     
 class Friendships(Base):
     __tablename__ = "Friendships"
@@ -219,3 +208,33 @@ class Friendships(Base):
 
     def __repr__(self):
         return f"<Friendships(requester_id={self.requester_id}, receiver_id={self.receiver_id}, status='{self.status}')>"
+    
+class Collection(Base):
+    __tablename__ = "Collections"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey('Users.id'), nullable=False)
+    name = Column(String(255), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # 관계 설정
+    user = relationship("User", back_populates="collections")
+    scraps = relationship("Scrap", back_populates="collection")
+
+    def __repr__(self):
+        return f"<Collection(id={self.id}, name={self.name})>"
+    
+class Scrap(Base):
+    __tablename__ = "Scraps"
+
+    user_id = Column(Integer, ForeignKey('Users.id'), primary_key=True, nullable=False)
+    restaurant_id = Column(Integer, ForeignKey('Restaurants.id'), primary_key=True, nullable=False)
+    collection_id = Column(Integer, ForeignKey('Collections.id'), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="scraps")
+    restaurant = relationship("Restaurant", back_populates="scraps")
+    collection = relationship("Collection", back_populates="scraps")
+
+    def __repr__(self):
+        return f"<Scrap(user_id={self.user_id}, restaurant_id={self.restaurant_id}, collection_id={self.collection_id})>"
