@@ -20,6 +20,7 @@ class CollectionResponse(BaseModel):
     name: str
     image_url: str | None = None
     created_at: datetime
+    has_scraps: bool
 
 
 # 스크랩 추가
@@ -168,7 +169,8 @@ def create_user_collection(
         id=new_collection.id,
         name=new_collection.name,
         image_url=None, # 새로 생성된 컬렉션은 대표 이미지가 없음
-        created_at=new_collection.created_at
+        created_at=new_collection.created_at,
+        has_scraps=False
     )
     
 # 컬렉션 목록 조회
@@ -191,10 +193,15 @@ def get_my_collections(
     for collection in collections:
         collection_image_url = None
         
-        latest_scrap = db.query(Scrap)\
-            .filter(Scrap.collection_id == collection.id)\
-            .order_by(Scrap.created_at.desc())\
-            .first()
+        scrap_count = db.query(Scrap).filter(Scrap.collection_id == collection.id).count()
+        has_scraps = scrap_count > 0
+        
+        latest_scrap = None
+        if has_scraps:
+            latest_scrap = db.query(Scrap)\
+                .filter(Scrap.collection_id == collection.id)\
+                .order_by(Scrap.created_at.desc())\
+                .first()
 
         if latest_scrap and latest_scrap.restaurant:
             image_field = latest_scrap.restaurant.image
@@ -204,11 +211,15 @@ def get_my_collections(
                 if images:
                     collection_image_url = images[0]
 
+            if has_scraps and collection_image_url is None:
+                collection_image_url = ""
+                
         response_list.append(CollectionResponse(
             id=collection.id,
             name=collection.name,
             image_url=collection_image_url,
-            created_at=collection.created_at
+            created_at=collection.created_at,
+            has_scraps=has_scraps
         ))
         
     return response_list
@@ -234,11 +245,10 @@ def delete_user_collection(
         raise HTTPException(status_code=404, detail="컬렉션을 찾을 수 없거나 삭제 권한이 없습니다.")
 
     # 2. 해당 컬렉션에 포함된 스크랩들의 collection_id를 NULL로 업데이트
-    #    -> 컬렉션이 삭제되어도 스크랩 자체는 '모든 스크랩' 목록에 남도록 처리
     db.query(Scrap).filter(
         Scrap.collection_id == collection_id,
-        Scrap.user_id == user.id # 사용자 소유 스크랩만 처리
-    ).update({Scrap.collection_id: None}) # 모든 컬렉션 ID를 None으로 설정
+        Scrap.user_id == user.id
+    ).update({Scrap.collection_id: None})
 
     # 3. 컬렉션 삭제
     db.delete(collection)
