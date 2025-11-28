@@ -212,3 +212,36 @@ def get_my_collections(
         ))
         
     return response_list
+
+# 컬렉션 삭제
+@router.delete("/collections/{collection_id}", tags=["collections"])
+def delete_user_collection(
+    collection_id: int,
+    db: Session = Depends(get_db),
+    uid: str = Depends(verify_firebase_token)
+):
+    user = db.query(User).filter(User.firebase_uid == uid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+
+    # 1. 컬렉션 조회 및 권한 확인
+    collection = db.query(Collection).filter(
+        Collection.id == collection_id,
+        Collection.user_id == user.id
+    ).first()
+
+    if not collection:
+        raise HTTPException(status_code=404, detail="컬렉션을 찾을 수 없거나 삭제 권한이 없습니다.")
+
+    # 2. 해당 컬렉션에 포함된 스크랩들의 collection_id를 NULL로 업데이트
+    #    -> 컬렉션이 삭제되어도 스크랩 자체는 '모든 스크랩' 목록에 남도록 처리
+    db.query(Scrap).filter(
+        Scrap.collection_id == collection_id,
+        Scrap.user_id == user.id # 사용자 소유 스크랩만 처리
+    ).update({Scrap.collection_id: None}) # 모든 컬렉션 ID를 None으로 설정
+
+    # 3. 컬렉션 삭제
+    db.delete(collection)
+    db.commit()
+
+    return {"message": "컬렉션 삭제 성공", "collection_id": collection_id}
