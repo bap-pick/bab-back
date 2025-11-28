@@ -5,8 +5,9 @@ import firebase_admin
 from firebase_admin import credentials
 import os
 from dotenv import load_dotenv
-from api import auth, users, chat, saju, restaurants, scraps, friends
+from api import auth, users, chat, saju, restaurants, scraps, friends, reservations
 from core.s3 import initialize_s3_client
+from vectordb.vectordb_util import get_embeddings, get_chroma_client
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
@@ -58,13 +59,28 @@ def initialize_s3_sync():
     else:
         print("S3 클라이언트 초기화 실패")
 
+# 임베딩 모델 로드 및 ChromaDB 클라이언트 연결
+def initialize_vectordb_sync():
+    try:
+        # 1. 양자화 모델 로드
+        get_embeddings()
+        print("양자화 임베딩 모델 로드 완료")
+
+        # 2. ChromaDB 클라이언트 연결
+        get_chroma_client()
+        print("ChromaDB 클라이언트 연결 완료")
+        
+    except Exception as e:
+        print(f" 벡터 DB 초기화 중 오류 발생: {e}")
+        raise RuntimeError("벡터 DB 초기화 실패: 서버를 시작할 수 없습니다.")
+    
 # 서버 시작 시 파이어베이스, S3 초기화
 @app.on_event("startup")
 async def startup_event():
     try:
         await asyncio.to_thread(initialize_firebase_sync)
-        await asyncio.to_thread(initialize_s3_sync)
-        print("서버 초기화 완료")
+        await asyncio.to_thread(initialize_s3_sync)        
+        await asyncio.to_thread(initialize_vectordb_sync)
     except Exception as e:
         print(f"초기화 중 오류 발생: {e}")
         raise
@@ -93,3 +109,4 @@ app.include_router(saju.router)
 app.include_router(restaurants.router)
 app.include_router(scraps.router)
 app.include_router(friends.router)
+app.include_router(reservations.router)

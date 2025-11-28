@@ -25,7 +25,7 @@ class User(Base):
     
     scraps = relationship("Scrap", back_populates="user")
     collections = relationship("Collection", back_populates="user")
-    
+    reservations = relationship("Reservation", back_populates="user")
     chatroom_memberships = relationship("ChatroomMember", back_populates="user")
     
     # Friendships 관계 추가
@@ -117,6 +117,7 @@ class Restaurant(Base):
     facility_associations = relationship("RestaurantFacility", back_populates="restaurant")
     reviews = relationship("Reviews", back_populates="restaurant")
     scraps = relationship("Scrap", back_populates="restaurant")
+    reservations = relationship("Reservation", back_populates="restaurant")
     
     @property
     def facilities(self) -> List["Facility"]:
@@ -238,3 +239,20 @@ class Scrap(Base):
 
     def __repr__(self):
         return f"<Scrap(user_id={self.user_id}, restaurant_id={self.restaurant_id}, collection_id={self.collection_id})>"
+
+class Reservation(Base):
+    __tablename__ = 'Reservations'
+
+    id = Column(Integer, primary_key=True, index=True)
+    restaurant_id = Column(Integer, ForeignKey('Restaurants.id'), nullable=False)
+    user_id = Column(Integer, ForeignKey('Users.id'), nullable=False, index=True) 
+    reservation_date = Column(Date, nullable=False)
+    reservation_time = Column(Time, nullable=False)
+    people_count = Column(Integer, nullable=False) 
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    
+    restaurant = relationship("Restaurant", back_populates="reservations")
+    user = relationship("User", back_populates="reservations") 
+
+    def __repr__(self):
+        return f"<Reservation(id={self.id}, user_id={self.user_id}, restaurant_id={self.restaurant_id})>"

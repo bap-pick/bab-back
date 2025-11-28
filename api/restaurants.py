@@ -66,7 +66,20 @@ class RestaurantDetail(BaseModel):
     class Config:
         from_attributes = True
         
+class RestaurantSearchItem(BaseModel):
+    id: int
+    name: str
+    category: str
+    address: Optional[str]
+    rating: Optional[float] = None
 
+    class Config:
+        from_attributes = True
+
+class RestaurantSearchResult(BaseModel):
+    count: int
+    restaurants: List[RestaurantSearchItem]
+    
 # 식당 상세 정보 조회 API
 @router.get(
     "/detail/{restaurant_id}",
@@ -160,4 +173,42 @@ def get_nearby_restaurants(
         "count": len(nearby_with_distance),
         "restaurants": nearby_with_distance
     }
+
+# 식당 검색 API
+@router.get(
+    "/search",
+    response_model=RestaurantSearchResult,
+    dependencies=[Depends(verify_firebase_token)]
+)
+def search_restaurants(
+    keyword: str = Query(..., min_length=1, description="검색 키워드 (식당명 또는 카테고리)"),
+    limit: int = Query(10, gt=0, description="최대 반환 개수"),
+    db: Session = Depends(get_db)
+):
+    search_term = f"%{keyword}%"
     
+    query = db.query(
+        Restaurant,
+        Reviews.rating.label('rating')
+    ).outerjoin(Reviews, Restaurant.id == Reviews.restaurant_id).filter(
+        (Restaurant.name.ilike(search_term)) | (Restaurant.category.ilike(search_term))
+    ).limit(limit)
+
+    results = query.all()
+    
+    restaurants_data = []
+    for restaurant, rating_value in results:
+        final_rating = float(rating_value) if rating_value is not None else None
+        
+        restaurants_data.append(RestaurantSearchItem(
+            id=restaurant.id,
+            name=restaurant.name,
+            category=restaurant.category,
+            address=restaurant.address,
+            rating=final_rating
+        ))
+        
+    return {
+        "count": len(restaurants_data),
+        "restaurants": restaurants_data
+    }
