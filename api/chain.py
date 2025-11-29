@@ -148,24 +148,6 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
     final_message = lacking_advice + control_advice + "<br>여기서 먹고 싶은 메뉴 하나 고르면 식당까지 바로 추천해줄게!"
     return final_message
 
-
-# 초기 메시지 반환
-async def get_initial_chat_message(uid: str, db: Session) -> str:
-    # 사주 데이터 불러오기
-    lacking_oheng, strong_oheng_db, oheng_type, oheng_scores = await _get_oheng_analysis_data(uid, db)
-    
-    # 메시지 생성 로직 (strong_ohengs 정보를 가져옴)
-    headline, advice, recommended_ohengs_weights, control_ohengs, strong_ohengs = define_oheng_messages(lacking_oheng, strong_oheng_db, oheng_type)
-    
-    initial_message = generate_concise_advice(
-        lacking_oheng=lacking_oheng, 
-        strong_oheng=strong_ohengs, 
-        control_oheng=control_ohengs 
-    )
-    
-    return initial_message
-
-
 # 최근 대화 10개를 문자열로 변환
 def build_conversation_history(db: Session, chatroom_id: int) -> str:
     recent_messages = (

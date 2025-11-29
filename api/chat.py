@@ -19,10 +19,8 @@ from core.websocket_manager import ConnectionManager, get_connection_manager
 from api.chain import (
     build_conversation_history,
     generate_llm_response,
-    get_initial_chat_message,
     search_and_recommend_restaurants,
     get_latest_recommended_foods,
-    is_initial_recommendation_request,
 )
 
 from api.saju import _get_oheng_analysis_data
@@ -84,7 +82,7 @@ def process_menu_selection(db: Session, chatroom: ChatRoom, llm_output: str) -> 
     # 위치 선택 프롬프트 메시지 생성
     assistant_reply = (
         f"그러면 {selected_menu} 먹으러 갈 식당 추천해줄게! 위치는 어디로 할까?\n\n"
-        "원하는 위치를 입력하거나 아래 버튼 중 하나를 골라줘!"
+        "원하는 위치를 입력하거나 버튼을 눌러줘!"
     )
     message_type = "location_select"
 
@@ -746,18 +744,7 @@ async def create_chatroom(
         )
         db.add(greeting_message)
         db.commit()
-
-        detailed_message_content = await get_initial_chat_message(uid, db)
-        detailed_message = ChatMessage(
-            room_id=chatroom.id,
-            role="assistant",
-            content=detailed_message_content,
-            sender_id="assistant",
-            message_type="hidden_initial",
-        )
-        db.add(detailed_message)
-        db.commit()
-
+        
         last_message_id = greeting_message.id
         initial_message_content = greeting_message_content
 
