@@ -1,5 +1,3 @@
-# api/chat.py
-
 import re
 import json
 import datetime
@@ -19,6 +17,7 @@ from core.websocket_manager import ConnectionManager, get_connection_manager
 from api.chain import (
     build_conversation_history,
     generate_llm_response,
+    get_initial_chat_message,
     search_and_recommend_restaurants,
     get_latest_recommended_foods,
 )
@@ -82,7 +81,7 @@ def process_menu_selection(db: Session, chatroom: ChatRoom, llm_output: str) -> 
     # 위치 선택 프롬프트 메시지 생성
     assistant_reply = (
         f"그러면 {selected_menu} 먹으러 갈 식당 추천해줄게! 위치는 어디로 할까?\n\n"
-        "원하는 위치를 입력하거나 버튼을 눌러줘!"
+        "원하는 위치를 채팅창에 입력하거나 버튼을 눌러줘!"
     )
     message_type = "location_select"
 
@@ -139,7 +138,7 @@ def process_location_selection_tag(
 
     print(f"[DEBUG] LOCATION_SELECTED 처리: action={action_type}, menu={selected_menu}, lat={lat}, lon={lon}")
 
-    # 식당 검색 (chain.py에서 lat/lon까지 받도록 구현했다고 가정)
+    # 식당 검색
     restaurant_data = search_and_recommend_restaurants(selected_menu, db, lat, lon)
 
     restaurants = restaurant_data.get("restaurants", [])
@@ -519,7 +518,10 @@ async def handle_websocket_message(
                 control_ohengs,
                 strong_ohengs,
             ) = define_oheng_messages(
-                lacking_oheng, strong_oheng_db, oheng_type
+                lacking_oheng,
+                strong_oheng_db,
+                oheng_type,
+                oheng_scores
             )
 
             oheng_info_text = f"""
@@ -607,7 +609,7 @@ async def handle_websocket_message(
             json.dumps(
                 {
                     "type": "error",
-                    "message": "서버에서 오류가 발생했습니다 😭 다시 시도해줘!",
+                    "message": "서버에서 오류가 발생했어 😭 다시 시도해줘!",
                 }
             ),
         )
@@ -731,22 +733,34 @@ async def create_chatroom(
     last_message_id = None
     initial_message_content = None
 
-    if not data.is_group:
-        greeting_message_content = (
-            "안녕! 나는 오늘의 운세에 맞춰 행운의 맛집을 추천해주는 '밥풀이'야🍀 "
-            "지금 너한테 딱 맞는 메뉴 추천해줄까?"
-        )
-        greeting_message = ChatMessage(
-            room_id=chatroom.id,
-            role="assistant",
-            content=greeting_message_content,
-            sender_id="assistant",
-        )
-        db.add(greeting_message)
-        db.commit()
+    greeting_message_content = (
+        "안녕! 나는 오늘의 운세에 맞춰 행운의 맛집을 추천해주는 '밥풀이'야🍀 "
+        "지금 너한테 딱 맞는 메뉴 추천해줄까?"
+    )
+    greeting_message = ChatMessage(
+        room_id=chatroom.id,
+        role="assistant",
+        content=greeting_message_content,
+        sender_id="assistant",
+    )
+    db.add(greeting_message)
+    db.commit()
         
-        last_message_id = greeting_message.id
-        initial_message_content = greeting_message_content
+        
+    detailed_message_content = await get_initial_chat_message(uid, db)
+    detailed_message = ChatMessage(
+        room_id=chatroom.id,
+        role="assistant",
+        content=detailed_message_content,
+        sender_id="assistant",
+        message_type="hidden_initial",
+    )
+    db.add(detailed_message)
+    db.commit()
+
+
+    last_message_id = greeting_message.id
+    initial_message_content = greeting_message_content
 
     chatroom.last_message_id = last_message_id
     db.add(chatroom)
@@ -1077,7 +1091,7 @@ async def send_message(
             control_ohengs,
             strong_ohengs,
         ) = define_oheng_messages(
-            lacking_oheng, strong_oheng_db, oheng_type
+            lacking_oheng, strong_oheng_db, oheng_type, oheng_scores
         )
 
         oheng_info_text = f"""
