@@ -74,10 +74,16 @@ async def get_personalized_recommendation(
 ):
     # 오행 분석 결과를 가져옴
     lacking_oheng, strong_oheng, oheng_type, oheng_scores_korean = await _get_oheng_analysis_data(uid, db)
-
+    
     # 규칙 기반 메시지 및 대상 오행 추출
-    headline, advice, recommended_ohengs_weights, control_ohengs, strong_ohengs = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)    
-
+    #headline, advice, recommended_ohengs_weights, control_ohengs, strong_ohengs = define_oheng_messages(lacking_oheng, strong_oheng, oheng_type)    
+    headline, advice, recommended_ohengs_weights, control_ohengs, strong_ohengs = define_oheng_messages(
+        lacking_oheng, 
+        strong_oheng, 
+        oheng_type, 
+        oheng_scores_korean # <-- 이 변수를 인수로 추가합니다.
+    )
+    
     # 제어 오행 리스트 중복 제거
     unique_control_ohengs = list(set(control_ohengs))
     

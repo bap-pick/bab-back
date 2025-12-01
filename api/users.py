@@ -2,14 +2,14 @@ from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File, 
 from sqlalchemy.orm import Session
 from typing import Dict, Any 
 from botocore.exceptions import ClientError
-
+from datetime import date, time
 from core.firebase_auth import verify_firebase_token # Firebase ID 토큰 검증
 from core.db import get_db # DB 세션 의존성
 from core.models import User # SQLAlchemy User 모델
 from core.s3 import get_s3_client, S3_BUCKET_NAME, S3_REGION 
-from saju.saju_service import calculate_today_saju_iljin
+from saju.saju_service import calculate_today_saju_iljin, recalculate_and_update_saju
 
-router = APIRouter(prefix="/users")
+router = APIRouter(prefix="/users", tags=["users"])
 
 # 내 정보 조회 API
 @router.get("/me")
@@ -83,36 +83,122 @@ async def generate_presigned_url(
 
 
 # PATCH: 내 정보 수정
+# @router.patch("/me")
+# async def patch_my_info(
+#     uid: str = Depends(verify_firebase_token),
+#     db: Session = Depends(get_db),
+#     s3_client = Depends(get_s3_client), 
+#     nickname: str = Form(None),
+#     profile_image_s3_key: str = Form(None)  # 브라우저가 업로드 후 전달
+# ):
+#     # DB에서 사용자 조회
+#     user = db.query(User).filter(User.firebase_uid == uid).first()
+#     if not user:
+#         raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
+
+#     # 만약 닉네임/이미지 둘 다 보내지 않았다면
+#     if not nickname and not profile_image_s3_key:
+#         raise HTTPException(status_code=400, detail="수정할 데이터가 없습니다.")
+
+#     # 닉네임 수정
+#     if nickname:
+#         user.nickname = nickname
+
+#     if profile_image_s3_key:
+#         # DB에 저장할 Public URL 생성
+#         user.profile_image = f"https://{S3_BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/{profile_image_s3_key}"
+        
+#     db.commit()
+#     db.refresh(user)
+
+#     return {
+#         "message": "회원 정보 수정 성공",
+#         "nickname": user.nickname,
+#         "profile_image": user.profile_image
+#     }
+# PATCH: 내 정보 수정
 @router.patch("/me")
 async def patch_my_info(
     uid: str = Depends(verify_firebase_token),
     db: Session = Depends(get_db),
-    s3_client = Depends(get_s3_client), 
     nickname: str = Form(None),
-    profile_image_s3_key: str = Form(None)  # 브라우저가 업로드 후 전달
+    profile_image_s3_key: str = Form(None),  # 브라우저가 업로드 후 전달
+    # --- 생년월일/성별 관련 필드 ---
+    gender: str = Form(None),
+    birth_date: str = Form(None),      
+    birth_time: str = Form(None),      
+    birth_calendar: str = Form(None),  
+    unknown_time: str = Form(None)     
+    # ----------------------------
 ):
-    # DB에서 사용자 조회
     user = db.query(User).filter(User.firebase_uid == uid).first()
     if not user:
         raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
 
-    # 만약 닉네임/이미지 둘 다 보내지 않았다면
-    if not nickname and not profile_image_s3_key:
+    has_update_data = any([nickname, profile_image_s3_key, gender, birth_date, birth_time, birth_calendar, unknown_time])
+    if not has_update_data:
         raise HTTPException(status_code=400, detail="수정할 데이터가 없습니다.")
 
-    # 닉네임 수정
-    if nickname:
+    # 닉네임 및 프로필 이미지 수정 (기존 로직 유지)
+    if nickname is not None:
         user.nickname = nickname
 
     if profile_image_s3_key:
-        # DB에 저장할 Public URL 생성
         user.profile_image = f"https://{S3_BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/{profile_image_s3_key}"
         
+    # --- 사주 재계산 필요 여부 플래그 ---
+    is_saju_data_changed = False 
+
+    # --- 생년월일/달력 수정 로직 ---
+    if gender and user.gender != gender:
+        user.gender = gender
+
+    if birth_date:
+        try:
+            new_birth_date = date.fromisoformat(birth_date)
+            if user.birth_date != new_birth_date:
+                user.birth_date = new_birth_date
+                is_saju_data_changed = True # 변경됨
+        except ValueError:
+            raise HTTPException(status_code=400, detail="유효하지 않은 birth_date 형식입니다. (YYYY-MM-DD)")
+
+    if birth_calendar and user.birth_calendar != birth_calendar:
+        user.birth_calendar = birth_calendar
+        is_saju_data_changed = True # 변경됨
+        
+    # --- 태어난 시간 수정 로직 ---
+    is_unknown_time = unknown_time == 'true'
+    new_birth_time = None
+    
+    if is_unknown_time:
+        new_birth_time = None
+    elif birth_time:
+        try:
+            h, m = map(int, birth_time.split(':'))
+            new_birth_time = time(h, m)
+        except (ValueError, IndexError):
+            raise HTTPException(status_code=400, detail="유효하지 않은 birth_time 형식입니다. (HH:MM)")
+    
+    # birth_time이 변경되었는지 확인 및 업데이트
+    if user.birth_time != new_birth_time:
+        user.birth_time = new_birth_time
+        is_saju_data_changed = True
+
+
+    # 사주 정보가 변경되었다면 재계산 로직 실행
+    if is_saju_data_changed:
+        # 사주 기둥 및 오행 점수를 재계산하고 User 모델을 업데이트
+        await recalculate_and_update_saju(user, db) 
+
     db.commit()
     db.refresh(user)
 
     return {
         "message": "회원 정보 수정 성공",
         "nickname": user.nickname,
-        "profile_image": user.profile_image
+        "profile_image": user.profile_image,
+        "gender": user.gender,
+        "birthDate": user.birth_date.isoformat(),
+        "birthTime": user.birth_time.strftime("%H:%M") if user.birth_time else None,
+        "birthCalendar": user.birth_calendar,
     }
