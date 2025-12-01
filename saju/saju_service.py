@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from starlette.concurrency import run_in_threadpool
 from core.models import User, Manse 
 from saju.saju_calculator import get_time_pillar, calculate_oheng_score
-from saju.saju_data import get_ten_star, get_jijangan, get_five_circle_from_char
+from saju.saju_data import get_ten_star, get_five_circle_from_char
 
 # Manse 테이블에서 자시, 절입 시간 보정
 def _get_manse_record(
@@ -291,3 +291,60 @@ async def calculate_today_saju_iljin(
         },
         "user_day_sky": user_day_sky
     }
+    
+async def recalculate_and_update_saju(user: User, db: Session):
+    """
+    사용자의 생년월일/시/음양력 정보가 변경되었을 때 사주를 재계산하고 User 모델을 업데이트합니다.
+    """
+    if not user.birth_date:
+        # 생년월일이 없으면 사주 계산 불가
+        print(f"User {user.id} has no birth date, skipping saju calculation.")
+        return
+
+    # 1. 만세력 기록 조회 (일주 보정 및 절기 기준)
+    manse_record = await run_in_threadpool(
+        _get_manse_record, 
+        db, 
+        user.birth_date, 
+        user.birth_time, 
+        user.birth_calendar
+    )
+
+    if not manse_record:
+        # 사주 계산에 필요한 만세력 데이터가 없는 경우
+        print(f"ERROR: No Manse record found for user {user.id} on date {user.birth_date}")
+        user.day_sky = None
+        user.oheng_wood = user.oheng_fire = user.oheng_earth = user.oheng_metal = user.oheng_water = None
+        return
+
+    # 2. 시주 계산 (생시가 None이면 시주는 None)
+    # get_time_pillar 함수가 'time_sky', 'time_ground'를 반환한다고 가정
+    time_pillar_data = get_time_pillar(manse_record.daySky, user.birth_time)
+    
+    # 3. 사주 기둥 데이터 준비 (calculate_oheng_score 함수가 딕셔너리를 입력받는다고 가정)
+    saju_pillars_data = {
+        'year_sky': manse_record.yearSky,
+        'year_ground': manse_record.yearGround,
+        'month_sky': manse_record.monthSky,
+        'month_ground': manse_record.monthGround,
+        'day_sky': manse_record.daySky,
+        'day_ground': manse_record.dayGround,
+        'time_sky': time_pillar_data.get('time_sky'),
+        'time_ground': time_pillar_data.get('time_ground')
+    }
+
+    # 4. 오행 점수 계산 (calculate_oheng_score는 동기 함수로 가정)
+    oheng_scores_raw = await run_in_threadpool(calculate_oheng_score, saju_pillars_data)
+
+    # 5. User 모델 필드 업데이트
+    # DB에 저장된 오행 점수 필드 (models.py 참고) 업데이트
+    user.day_sky = manse_record.daySky # 일간은 사주 핵심 정보이므로 저장
+    user.oheng_wood = oheng_scores_raw.get('목(木)')
+    user.oheng_fire = oheng_scores_raw.get('화(火)')
+    user.oheng_earth = oheng_scores_raw.get('토(土)')
+    user.oheng_metal = oheng_scores_raw.get('금(金)')
+    user.oheng_water = oheng_scores_raw.get('수(水)')
+    
+    # (선택) 오행 분석 결과를 저장하는 필드가 있다면 추가 업데이트 가능
+    # analysis_result = classify_and_determine_recommendation(oheng_scores_raw)
+    # user.oheng_type = analysis_result['oheng_type']

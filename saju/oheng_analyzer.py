@@ -34,19 +34,20 @@ def classify_and_determine_recommendation(
     lacking_oheng: List[str] = []
     strong_oheng: List[str] = []
     
-    # A. 균형형: 가장 강한 오행 1개 억제
-    if oheng_type == "균형형":
-        lacking_oheng = []
-        strong_oheng = oheng_names[-1:] 
-    # B. 치우침형: 가장 부족한 오행 2개 보충, 가장 강한 오행 1개 억제
-    elif oheng_type == "치우침형":
-        lacking_oheng = oheng_names[:2] 
-        strong_oheng = oheng_names[-1:]
-    # C. 무형: 가장 부족한 오행 1개 보충, 가장 강한 오행 2개 억제
-    else:
-        lacking_oheng = oheng_names[:1] 
-        strong_oheng = oheng_names[-2:]
+    # 오행 수치 최소값과 최대값 추출
+    min_value = oheng_values[0] # 가장 낮은 오행 수치
+    max_value = oheng_values[-1] # 가장 높은 오행 수치
     
+    # 1. 부족 오행 선정: 최소값과 동일한 모든 오행을 부족 오행으로 선정
+    for i in range(len(oheng_values)):
+        if oheng_values[i] == min_value:
+            lacking_oheng.append(oheng_names[i])
+            
+    # 2. 과다 오행 선정: 최대값과 동일한 모든 오행을 과다 오행으로 선정
+    for i in range(len(oheng_values) - 1, -1, -1):
+        if oheng_values[i] == max_value:
+            strong_oheng.append(oheng_names[i])
+            
     result["oheng_type"] = oheng_type
     result["primary_supplement_oheng"] = lacking_oheng
     result["secondary_control_oheng"] = strong_oheng

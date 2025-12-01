@@ -1,5 +1,5 @@
 from datetime import time
-from typing import Dict, List, Any
+from typing import Dict, List
 
 # 천간, 지지의 음양 데이터 가져오기
 def get_minus_plus() -> Dict[str, str]:
