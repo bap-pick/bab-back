@@ -88,9 +88,7 @@ async def startup_event():
 # CORS 설정
 origins = [
     "http://127.0.0.1:5500",
-    "http://127.0.0.1:5501",
-    "https://bab-back.onrender.com",
-    "https://bab-front-jet.vercel.app",
+    "https://bab-front-gamma.vercel.app",
 ]
 
 app.add_middleware(
@@ -102,11 +100,11 @@ app.add_middleware(
 )
 
 # 라우터 추가
-app.include_router(auth.router)
-app.include_router(users.router)
-app.include_router(chat.router)
-app.include_router(saju.router)
-app.include_router(restaurants.router)
-app.include_router(scraps.router)
-app.include_router(friends.router)
-app.include_router(reservations.router)
+app.include_router(auth.router, prefix="/api")
+app.include_router(users.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
+app.include_router(saju.router, prefix="/api")
+app.include_router(restaurants.router, prefix="/api")
+app.include_router(scraps.router, prefix="/api")
+app.include_router(friends.router, prefix="/api")
+app.include_router(reservations.router, prefix="/api")
