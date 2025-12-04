@@ -24,7 +24,7 @@ class CollectionResponse(BaseModel):
 
 
 # 스크랩 추가
-@router.post("/")
+@router.post("/create")
 def create_scrap(
     scrap_data: ScrapCreate,
     db: Session = Depends(get_db),

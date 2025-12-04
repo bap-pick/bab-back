@@ -38,7 +38,7 @@ class ReservationDisplay(BaseModel):
 
 
 # 1. 예약 생성 API
-@router.post("/", response_model=ReservationDisplay)
+@router.post("/create", response_model=ReservationDisplay)
 def create_reservation(
     reservation: ReservationCreate,
     db: Session = Depends(get_db),
