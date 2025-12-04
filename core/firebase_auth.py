@@ -28,8 +28,13 @@ def verify_firebase_token(authorization: str = Header(...)):
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
     
 
+
 # WebSocket 연결 시 사용자 인증 처리 
 async def get_user_uid_from_websocket_token(id_token: str) -> str:
+    # 토큰 앞에 'Bearer ' 접두사가 붙어있다면 제거합니다.
+    if id_token.startswith("Bearer "):
+        id_token = id_token.split(" ")[1].strip()
+    
     try:
         decoded_token = auth.verify_id_token(
             id_token,
@@ -38,6 +43,5 @@ async def get_user_uid_from_websocket_token(id_token: str) -> str:
         return decoded_token["uid"]
     
     except Exception as e:
-        logger.error(f"WebSocket 토큰 검증 오류: {e}")
-        # 인증 실패 시 예외 발생
-        raise Exception("유효하지 않은 토큰입니다.")
+        logger.error(f"WebSocket 토큰 검증 오류: {e}") 
+        raise Exception(f"인증 실패: {e}")
