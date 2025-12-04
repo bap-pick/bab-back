@@ -1,9 +1,11 @@
 import chromadb
+import os
+import onnxruntime
+import numpy as np
+from transformers import AutoTokenizer
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 from typing import List, Dict, Any, Optional
-import json
 from core.db import SessionLocal
 from core.models import Restaurant
 from core.config import CHROMA_HOST, CHROMA_PORT
@@ -12,23 +14,106 @@ from sqlalchemy.orm import Session, joinedload
 # ChromaDB 컬렉션 설정
 COLLECTION_NAME_OHAENG = "ohaeng_rules_knowledge_base"
 COLLECTION_NAME_RESTAURANTS = "restaurants_knowledge_base"
-COLLECTION_NAME_REASONS = "ohaeng_reasons_knowledge_base" 
+COLLECTION_NAME_MENUS = "menu_ohaeng_assignments"
 
 # 임베딩 모델 설정
-EMBEDDING_MODEL_NAME = "nlpai-lab/KURE-v1" 
-embeddings: Optional[HuggingFaceEmbeddings] = None 
+ONNX_MODEL_DIR = "/app/kure-v1-onnx"
+embeddings: Optional['QuantizedEmbeddings'] = None
 
 # ChromaDB 클라이언트 설정
 chroma_client: Optional[chromadb.HttpClient] = None
 
-# 지연 로드(Lazy Load) 방식으로 임베딩 모델 로드
-def get_embeddings() -> HuggingFaceEmbeddings:
+# 양자화 모델 로드
+class QuantizedEmbeddings:
+    def __init__(self, model_dir: str):
+        onnx_path = os.path.join(model_dir, "quantized_model.onnx")
+        
+        if not os.path.exists(onnx_path):
+            raise FileNotFoundError(f"[ERROR] ONNX 모델이 없습니다: {onnx_path}. 'convert_to_onnx.py'를 실행했는지 확인하세요.")
+
+        print(f"[INFO] 저장된 ONNX 모델 로딩 중: {onnx_path}")
+        # 1. ONNX Runtime 세션 로드
+        self.session = onnxruntime.InferenceSession(onnx_path)
+        # 2. 토크나이저 로드 (Hugging Face transformers 사용)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_dir)
+        print("ONNX 모델 및 토크나이저 로드 완료.")
+
+    # 단일 텍스트 임베딩 생성
+    def embed_query(self, text: str) -> List[float]:
+        inputs = self.tokenizer(
+            text, 
+            padding=True, 
+            truncation=True, 
+            return_tensors="np"
+        )
+        
+        input_feed = {
+            'input_ids': inputs['input_ids'],
+            'attention_mask': inputs['attention_mask'],
+        }
+        
+        outputs = self.session.run(
+            output_names=['last_hidden_state'], 
+            input_feed=input_feed
+        )
+        
+        last_hidden_state = outputs[0]
+        
+        # 평균 풀링 (Mean Pooling)
+        input_mask_expanded = inputs['attention_mask'][:, :, np.newaxis].astype(last_hidden_state.dtype)
+        sum_embeddings = (last_hidden_state * input_mask_expanded).sum(axis=1)
+        sum_mask = input_mask_expanded.sum(axis=1).clip(min=1e-9)
+        sentence_embedding = sum_embeddings / sum_mask
+        
+        # L2 정규화
+        norm = np.linalg.norm(sentence_embedding, axis=1, keepdims=True)
+        return (sentence_embedding / norm)[0].tolist()
+
+    # 문서 목록 임베딩 생성
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        inputs = self.tokenizer(
+            texts, 
+            padding=True, 
+            truncation=True, 
+            return_tensors="np"
+        )
+        
+        input_feed = {
+            'input_ids': inputs['input_ids'],
+            'attention_mask': inputs['attention_mask'],
+        }
+        
+        outputs = self.session.run(
+            output_names=['last_hidden_state'], 
+            input_feed=input_feed
+        )
+        
+        last_hidden_state = outputs[0]
+        
+        # 평균 풀링
+        input_mask_expanded = inputs['attention_mask'][:, :, np.newaxis].astype(last_hidden_state.dtype)
+        sum_embeddings = (last_hidden_state * input_mask_expanded).sum(axis=1)
+        sum_mask = input_mask_expanded.sum(axis=1).clip(min=1e-9)
+        sentence_embedding = sum_embeddings / sum_mask
+        
+        # L2 정규화 및 반환
+        norm = np.linalg.norm(sentence_embedding, axis=1, keepdims=True)
+        return (sentence_embedding / norm).tolist()
+    
+# 양자화된 모델 로드 (지연 로딩)
+def get_embeddings() -> 'QuantizedEmbeddings':
     global embeddings
     if embeddings is None:
-        embeddings = HuggingFaceEmbeddings(
-            model_name=EMBEDDING_MODEL_NAME,
-            model_kwargs={'device': 'cpu'}
+        embeddings = QuantizedEmbeddings(
+            model_dir=ONNX_MODEL_DIR, # ONNX 경로 사용
         )
+        # 로드 성공 확인을 위해 테스트 임베딩 실행
+        try:
+            test_embedding = embeddings.embed_query('테스트')
+            print(f"생성된 벡터 차원: {len(test_embedding)}")
+        except Exception as e:
+            print(f"임베딩 테스트 실패: {e}. ONNX 모델이 올바른지 확인하세요.")
+
     return embeddings
 
 # 지연 로드(Lazy Load) 방식으로 ChromaDB 클라이언트 연결
@@ -45,7 +130,6 @@ def get_chroma_client() -> chromadb.HttpClient:
             
     return chroma_client
 
-# ChromaDB 연결/컬렉션 로드
 def get_chroma_client_and_collection(
     collection_name: str, 
     use_langchain_chroma: bool = False
@@ -61,12 +145,15 @@ def get_chroma_client_and_collection(
                 collection_name=collection_name,
                 embedding_function=get_embeddings()
             )
+            return client, collection_obj
+            
         else:
+            # 기본 Chroma 컬렉션 객체를 반환
             return client, client.get_collection(name=collection_name)
             
     except Exception as e:
         print(f"ChromaDB 연결/컬렉션 로드 실패: {e}")
-        return None, None
+        return None, None # 오류 발생 시 두 개의 None 반환
     
 # MySQL에서 특정 ID의 식당과 메뉴 조회 후 Document 객체 생성
 def fetch_and_create_document(restaurant_id: int, db: Session) -> Optional[Document]:
@@ -256,7 +343,7 @@ def display_raw_collection_data(chroma_client: chromadb.HttpClient, collection_n
 
         results = collection.get(
             limit=limit,
-            include=['metadatas', 'documents'] 
+            include=['metadatas', 'documents', 'embeddings'] 
         )
         
         doc_count = len(results.get('ids', [])) # 실제 조회하는 문서의 개수
@@ -264,7 +351,20 @@ def display_raw_collection_data(chroma_client: chromadb.HttpClient, collection_n
             print(f"{collection_name} 컬렉션에 문서가 없음")
             return
         
-        print(json.dumps(results, indent=2, ensure_ascii=False))
+        
+        # 문서별로 일부 내용과 임베딩 정보 출력
+        for i in range(doc_count):
+            print(f"\n문서 {i+1} / {doc_count} (ID: {results['ids'][i]})")
+            print("메타데이터:", results['metadatas'][i])
+            print("문서 내용:", results['documents'][i][:150] + "...")
+            embedding = results['embeddings'][i] if 'embeddings' in results else None
+            if embedding is not None:
+                # NumPy → 리스트 변환
+                if hasattr(embedding, 'tolist'):
+                    embedding_list = embedding.tolist()
+                else:
+                    embedding_list = embedding
+                print(f"임베딩 길이: {len(embedding_list)}")  # 차원 확인
         
         if collection.count() > limit:
             print(f"\n {collection_name} 컬렉션에는 총 {collection.count()}개의 문서가 있으며, {limit}개만 출력함")
@@ -284,7 +384,7 @@ def check_all_collections():
 
     COLLECTIONS_TO_CHECK = [
         COLLECTION_NAME_RESTAURANTS,
-        COLLECTION_NAME_REASONS,
+        COLLECTION_NAME_MENUS,
         COLLECTION_NAME_OHAENG,
     ]
     
@@ -294,7 +394,4 @@ def check_all_collections():
         
         
 if __name__ == "__main__":
-    #restore_restaurant_data(1498)
-    #delete_restaurant_data_batch(TARGET_RESTAURANT_IDS)
-    #check_restaurant_document(14)
-    check_all_collections()
+    client = get_chroma_client()
