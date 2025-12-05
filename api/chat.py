@@ -629,9 +629,6 @@ async def websocket_endpoint(
     logger.info(f"[WS] 연결 시도: room={room_id}, token_len={len(token)}")
     
     try:
-        await websocket.accept()
-        logger.info(f"[WS] WebSocket accept 완료")
-        
         # 토큰 검증
         uid = await get_user_uid_from_websocket_token(token)
         logger.info(f"[WS] 토큰 검증 성공: uid={uid}")
@@ -639,7 +636,6 @@ async def websocket_endpoint(
         user = db.query(User).filter(User.firebase_uid == uid).first()
         if not user:
             logger.error(f"[WS] 사용자 없음: uid={uid}")
-            await websocket.close(code=1008, reason="등록되지 않은 사용자")
             return
 
         logger.info(f"[WS] 사용자 조회 성공: user_id={user.id}")
@@ -654,7 +650,6 @@ async def websocket_endpoint(
         )
         if not member:
             logger.error(f"[WS] 권한 없음: room={room_id}, user={user.id}")
-            await websocket.close(code=1008, reason="채팅방 접근 권한 없음")
             return
 
         logger.info(f"[WS] 권한 확인 완료")
@@ -683,11 +678,6 @@ async def websocket_endpoint(
 
     except Exception as e:
         logger.error(f"[WS] 오류 발생: {type(e).__name__} - {str(e)}")
-        # accept 전 에러면 그냥 종료, accept 후 에러면 close
-        try:
-            await websocket.close(code=1011, reason=str(e))
-        except:
-            pass
 
 
 
