@@ -31,17 +31,27 @@ def verify_firebase_token(authorization: str = Header(...)):
 
 # WebSocket 연결 시 사용자 인증 처리 
 async def get_user_uid_from_websocket_token(id_token: str) -> str:
-    # 토큰 앞에 'Bearer ' 접두사가 붙어있다면 제거합니다.
+    logger.info(f"[WS Auth] 토큰 검증 시작, len={len(id_token)}")
+    
     if id_token.startswith("Bearer "):
         id_token = id_token.split(" ")[1].strip()
+        logger.info("[WS Auth] Bearer 접두사 제거")
     
     try:
         decoded_token = auth.verify_id_token(
             id_token,
             clock_skew_seconds=5
         )
-        return decoded_token["uid"]
+        uid = decoded_token["uid"]
+        logger.info(f"[WS Auth] 검증 성공: uid={uid}")
+        return uid
     
+    except auth.ExpiredIdTokenError as e:
+        logger.error(f"[WS Auth] 토큰 만료: {str(e)}")
+        raise Exception("토큰이 만료되었습니다")
+    except auth.RevokedIdTokenError as e:
+        logger.error(f"[WS Auth] 토큰 취소: {str(e)}")
+        raise Exception("토큰이 취소되었습니다")
     except Exception as e:
-        logger.error(f"WebSocket 토큰 검증 오류: {e}") 
-        raise Exception(f"인증 실패: {e}")
+        logger.error(f"[WS Auth] 검증 실패: {type(e).__name__} - {str(e)}")
+        raise Exception(f"인증 실패: {str(e)}")
