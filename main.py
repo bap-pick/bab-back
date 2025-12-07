@@ -89,6 +89,7 @@ async def startup_event():
 origins = [
     "http://127.0.0.1:5500",
     "https://bab-front-gamma.vercel.app",
+    "https://bapick.duckdns.org",
 ]
 
 app.add_middleware(

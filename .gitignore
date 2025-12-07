@@ -46,3 +46,5 @@ __pycache__/
 .ipynb_checkpoints/
 
 /chroma_data/
+
+models/
