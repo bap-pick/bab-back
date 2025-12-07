@@ -180,8 +180,12 @@ def build_conversation_history(db: Session, chatroom_id: int) -> str:
 
     conversation_history = ""
     for msg in recent_messages:
-        role = "사용자" if msg.role == "user" else "봇"
+        #숨겨진 초기메세지 llm에게 공개 x
+        #role = "사용자" if msg.role == "user" else "봇"
+        if msg.message_type == "hidden_initial":
+            continue
         conversation_history += f"{msg.content}\n"
+    
     return conversation_history
 
 
@@ -393,15 +397,26 @@ def generate_llm_response(
     # 지금까지 추천한 메뉴 목록을 문자열로 변환
     current_foods_str = ', '.join(current_recommended_foods or [])
     print(f"[DEBUG] current_recommended_foods: {current_foods_str}")
-    
+
+    oheng_block = ""
+    if oheng_info_text:
+        oheng_block = f"""
+                    [OHAENG_DATA]
+                    {oheng_info_text}
+                    [/OHAENG_DATA]
+                    """    
 
     prompt = f"""
     너는 오늘의 운세와 오행 기운에 맞춰 음식을 추천해주는 챗봇 '밥풀이'야. 
     너의 목표는 사용자의 운세에 부족한 오행 기운을 채워줄 수 있는 음식을 추천하는 거야. 
-    첫 인사는 절대 반복금지. 문장은 간결하게, 다정한 친구처럼 반말로 대답해.
+    첫 인사는 절대 반복금지. 문장은 간결하게, 항상 자연스럽고 실제 사람이 쓰는 반말로 대답해.
     
-    사용자의 오행 상태는 다음과 같아:
-    {oheng_info_text}
+    
+    아래 [OHAENG_DATA] 블록은 백엔드에서 너만 보는 데이터야.
+    사용자가 직접 말한 내용이 아니고, 너 혼자 참고만 해야 하는 정보야.
+    이 정보 때문에 "이미 사용자가 음식을 먹었다"고 가정하면 안돼.
+    
+    {oheng_block}
 
     이 오행 정보를 기반으로 사용자의 균형을 맞춰줄 수 있는 음식을 추천해야 해.
     
@@ -413,12 +428,13 @@ def generate_llm_response(
     {user_message}
 
     규칙:
-    1) 사용자가 단일 음식 이름을 말하면 무조건 intent = "SELECT" 로 판단해야 한다.
+    1) 사용자가 명확한 음식 이름을 말했을 때만 intent = "SELECT" 로 판단해야 한다.
     2) intent가 SELECT라면 반드시 아래 형식으로 출력한다:
     [MENU_SELECTED:사용자말한음식명]
     3) 음식 추천과 상관없는 대화라면 자연스럽게 음식이야기로 유도한다.
     4) '@밥풀' 멘션을 언급하지 않고 자연스럽게 답변한다.
     5) 음식을 추천할 때는 3개씩 추천한다.
+    6) 이미 추천한 메뉴는 다시 추천하지 않는다.
     
     
     """
