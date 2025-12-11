@@ -1,13 +1,14 @@
+import time
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import time
+from datetime import time as DtTime
 from core.firebase_auth import verify_firebase_token
 from core.db import get_db
 from core.models import Restaurant, RestaurantFacility, Reviews
-from core.geo import calculate_distance
+from services.restaurant_service import RestaurantLocationService
+from services.restaurant_cache_service import RestaurantCacheService
 
 router = APIRouter(prefix="/restaurants", tags=["restaurants"])
 
@@ -21,11 +22,11 @@ class MenuBase(BaseModel):
         
 class OpeningHourBase(BaseModel):
     day: Optional[str]
-    open_time: Optional[time]
-    close_time: Optional[time]
-    break_start: Optional[time]
-    break_end: Optional[time]
-    last_order: Optional[time]
+    open_time: Optional[DtTime]
+    close_time: Optional[DtTime]
+    break_start: Optional[DtTime]
+    break_end: Optional[DtTime]
+    last_order: Optional[DtTime]
     is_closed: bool
 
     class Config:
@@ -105,73 +106,78 @@ def get_restaurant_detail(
     
     return restaurant
 
-# 현재 위치 근처 식당 5개 조회 (1km 이내 리뷰 많은 순 정렬)
-@router.get(
-    "/nearby",
-    dependencies=[Depends(verify_firebase_token)]    
-)
+# 현재 위치 근처 식당 조회 (1km 이내 리뷰 많은 순 정렬)
+@router.get("/nearby")
 def get_nearby_restaurants(
     lat: float = Query(..., description="현재 위도"),
     lon: float = Query(..., description="현재 경도"),
-    limit: Optional[int] = Query(None, description="가져올 식당 개수 제한"),
+    limit: Optional[int] = Query(5, description="가져올 식당 개수"),
     db: Session = Depends(get_db)
-):
-    query = db.query(
-        Restaurant,
-        Reviews.rating.label('rating'),
-        (func.coalesce(Reviews.visitor_reviews, 0) + func.coalesce(Reviews.blog_reviews, 0)).label('review_count')
-    ).outerjoin(Reviews, Restaurant.id == Reviews.restaurant_id)
+):    
+    start_time = time.time()
     
-    results = query.all()
-
-    nearby_with_distance = []
-    for restaurant, rating_value, count_value in results:
-        # DB에 위도/경도 데이터가 없는 식당은 제외
-        if restaurant.latitude is None or restaurant.longitude is None:
-            continue
+    # 1. Redis에서 1km 이내 식당 필터링
+    location_service = RestaurantLocationService()
+    
+    redis_start = time.time()
+    distance_map = location_service.get_nearby_ids_with_distance(
+        longitude=lon,
+        latitude=lat,
+        radius_km=1.0,
+    )
+    redis_time = time.time() - redis_start
+    
+    if not distance_map:
+        print("1km 이내 식당 없음")
+        return {"count": 0, "restaurants": []}
+    
+    restaurant_ids = list(distance_map.keys())
+    print(f"Redis 조회: {len(restaurant_ids)}개 식당 (1km 이내)")
+    
+    # 2. Redis 캐시에서 식당 상세 정보 조회
+    summary_service = RestaurantCacheService() # 캐시 서비스 인스턴스
+    db_start = time.time()
+    
+    # Redis Hash에서 식당 ID 목록의 요약 정보를 한 번에 가져옴
+    summaries = summary_service.get_summaries_by_ids(restaurant_ids)
+    
+    db_time = time.time() - db_start
+    
+    # 3. 데이터 결합 및 정렬
+    restaurants_data = []
+    
+    for r_id, summary in summaries.items():
+        # Redis GeoSet에서 가져온 거리
+        distance_km = distance_map.get(r_id, 0)
         
-        # 사용자가 설정한 위치와 식당 위치 간 거리 계산
-        distance_km = calculate_distance(lat, lon, restaurant.latitude, restaurant.longitude)
-        
-        # 1km 이내 식당만 필터링
-        if distance_km > 1.0: 
-            continue
-            
-        final_rating = float(rating_value) if rating_value is not None else 0.0
-        final_review_count = count_value if count_value is not None else 0
-        
-        # km 거리를 m단위로 변환
-        distance_m = int(round(distance_km * 1000))
-        
-        restaurant_data = {
-            "id": restaurant.id,
-            "name": restaurant.name,
-            "category": restaurant.category,
-            "address": restaurant.address,
-            "image": restaurant.image,
-            "latitude": restaurant.latitude, 
-            "longitude": restaurant.longitude,
-            "rating": final_rating,
-            "review_count": final_review_count,
+        restaurants_data.append({
+            "id": r_id,
+            "name": summary["name"],
+            "category": summary["category"], 
+            "address": summary["address"],
+            "image": summary["image"],
+            "latitude": summary["latitude"], 
+            "longitude": summary["longitude"],
+            "rating": summary["rating"],
+            "review_count": summary["review_count"],
             "distance_km": round(distance_km, 2),
-            "distance_m": distance_m
-        }
-        
-        nearby_with_distance.append(restaurant_data)
-
-    # 거리순 정렬
-    # nearby_with_distance.sort(key=lambda x: x["distance_km"])
+            "distance_m": int(distance_km * 1000)
+        })
     
-    # 리뷰 수(review_count) 내림차순 정렬
-    nearby_with_distance.sort(key=lambda x: x["review_count"], reverse=True)
-
-    # limit 지정
+    # 리뷰 많은 순 정렬
+    restaurants_data.sort(key=lambda x: x["review_count"], reverse=True)
+    
+    # limit 적용
     if limit:
-        nearby_with_distance = nearby_with_distance[:limit]
-
+        restaurants_data = restaurants_data[:limit]
+    
+    total_time = time.time() - start_time
+    
+    print(f"Redis Geo: {redis_time:.4f}초, Redis Hash: {db_time:.4f}초, 총: {total_time:.4f}초")
+    
     return {
-        "count": len(nearby_with_distance),
-        "restaurants": nearby_with_distance
+        "count": len(restaurants_data),
+        "restaurants": restaurants_data
     }
 
 # 식당 검색 API

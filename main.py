@@ -79,16 +79,17 @@ def initialize_vectordb_sync():
 async def startup_event():
     try:
         await asyncio.to_thread(initialize_firebase_sync)
-        await asyncio.to_thread(initialize_s3_sync)        
-        await asyncio.to_thread(initialize_vectordb_sync)
+        await asyncio.to_thread(initialize_s3_sync)
+        await asyncio.to_thread(initialize_vectordb_sync)   
     except Exception as e:
-        print(f"초기화 중 오류 발생: {e}")
+        print(f"초기화 중 오류: {e}")
         raise
 
 # CORS 설정
 origins = [
     "http://127.0.0.1:5500",
     "https://bab-front-gamma.vercel.app",
+    "https://bapick-app.vercel.app",
     "https://bapick.duckdns.org",
 ]
 

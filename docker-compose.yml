@@ -1,7 +1,7 @@
 services:
-  bap-back:
+  app:
     image: yooseohyeon/bapick-app:latest 
-    container_name: fastapi_onnx_app
+    container_name: fastapi
     ports:
       - "8000:8000"
     
@@ -13,16 +13,26 @@ services:
       - /home/ec2-user/kure-v1-onnx:/app/kure-v1-onnx
     depends_on:
       - chromadb
+      - redis
     restart: always
 
   chromadb:
     image: yooseohyeon/my-chroma-repo:v1.1
-    container_name: chroma_final_server 
+    container_name: bapick_chroma
     ports:
       - "8001:8000" 
     volumes:
       - /home/ec2-user/chroma_data:/data 
     restart: always
 
+  redis:
+    image: redis:7-alpine
+    container_name: bapick_redis
+    ports:
+      - "6379:6379" 
+    volumes:
+      - redis_data:/data 
+    restart: always
 volumes:
   chroma_data:
+  redis_data:

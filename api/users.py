@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from typing import Dict, Any 
 from botocore.exceptions import ClientError
 from datetime import date, time
 from core.firebase_auth import verify_firebase_token # Firebase ID 토큰 검증
@@ -8,8 +7,16 @@ from core.db import get_db # DB 세션 의존성
 from core.models import User # SQLAlchemy User 모델
 from core.s3 import get_s3_client, S3_BUCKET_NAME, S3_REGION 
 from saju.saju_service import calculate_today_saju_iljin, recalculate_and_update_saju
+from services.user_cache_service import UserCacheService
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+# 기본 이미지 URL
+DEFAULT_PROFILE_IMAGE_KEY = "default/default_profile.png" # S3에 올린 경로와 파일명
+DEFAULT_PROFILE_IMAGE_URL = (
+    f"https://{S3_BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/{DEFAULT_PROFILE_IMAGE_KEY}"
+)
+
 
 # 내 정보 조회 API
 @router.get("/me")
@@ -18,44 +25,110 @@ async def get_my_info(
     fields: str = Query(None, description="쉼표로 구분된 필요한 필드 목록"),
     db: Session = Depends(get_db)
 ):
-    # DB에서 사용자 조회
-    user = db.query(User).filter(User.firebase_uid == uid).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
+    cache_service = UserCacheService()
+    today = date.today()
+    
+    user = None # DB에서 조회한 user 객체를 저장할 변수
+    
+    # 1. 사용자 프로필 캐시 조회 및 user_dict 생성
+    cached_profile = cache_service.get_user_profile(uid)
+    
+    if cached_profile:
+        user_dict = cached_profile
+    else:
+        # DB에서 사용자 조회
+        user = db.query(User).filter(User.firebase_uid == uid).first() # firebase_uid 사용
+        if not user:
+            raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
         
-    # 오늘의 일진 기반 오행 점수 계산
-    today_oheng_scores: Dict[str, float] = {}
-    try:
-        iljin_data = await calculate_today_saju_iljin(user, db)
-        today_oheng_scores = iljin_data["today_oheng_percentages"]
+        # User 객체에서 dict 생성
+        user_dict = {
+            "email": user.email,
+            "nickname": user.nickname,
+            "gender": user.gender,
+            "birthDate": user.birth_date,
+            "birthTime": user.birth_time,
+            "birthCalendar": user.birth_calendar,
+            "profileImage": user.profile_image,
+            "daySky": user.day_sky,
+            "ohengWood": user.oheng_wood,
+            "ohengFire": user.oheng_fire,
+            "ohengEarth": user.oheng_earth,
+            "ohengMetal": user.oheng_metal,
+            "ohengWater": user.oheng_water,
+        }
+        # DB 조회 후 캐시 저장
+        cache_service.set_user_profile(uid, user_dict)
+    
+    # 1. S3 기본 이미지 로직 적용
+    final_profile_image = user_dict.get('profileImage')
+    # None이거나, 빈 문자열이거나, 공백 문자열인 경우 기본 URL로 대체
+    if not final_profile_image or not str(final_profile_image).strip(): 
+        user_dict['profileImage'] = DEFAULT_PROFILE_IMAGE_URL
         
-    except Exception as e:
-        print(f"Error calculating today's saju for {uid}: {e}")
-        today_oheng_scores = {k: 0.0 for k in ["ohengWood", "ohengFire", "ohengEarth", "ohengMetal", "ohengWater"]}
-
-    # 사용자 정보 딕셔너리 생성
-    user_dict: Dict[str, Any] = {
-        "email": user.email,
-        "nickname": user.nickname,
-        "gender": user.gender,
-        "birthDate": user.birth_date,
-        "birthTime": user.birth_time,
-        "birthCalendar": user.birth_calendar,
-        "profileImage": user.profile_image,
+    # 2. 오늘의 오행 점수 계산
+    today_oheng_scores = {} # 오행 점수 결과를 담을 딕셔너리
+    should_calculate_oheng = True
+    
+    if fields:
+        requested_fields = set(f.strip() for f in fields.split(","))
+        oheng_fields = {"ohengWood", "ohengFire", "ohengEarth", "ohengMetal", "ohengWater"}
         
-        # 오늘의 일진에 따라 보정된 오행 비율
+        # 요청된 필드 목록에 오행 관련 필드가 하나도 없으면 계산을 건너뜀
+        if not any(f in requested_fields for f in oheng_fields):
+            should_calculate_oheng = False
+    
+    if should_calculate_oheng:
+        # 캐시 조회 로직
+        cached_oheng = cache_service.get_user_today_oheng(uid, today)
+        
+        if cached_oheng:
+            today_oheng_scores = cached_oheng
+        else:
+            # DB 조회(user 객체)가 없으면 캐시된 dict으로 임시 User 객체 재구성
+            if not user:
+                user = User(
+                    firebase_uid=uid, 
+                    # user_dict의 데이터로 User 객체의 사주 관련 필드를 복원
+                    birth_date=user_dict["birthDate"],
+                    birth_time=user_dict["birthTime"],
+                    birth_calendar=user_dict["birthCalendar"],
+                    day_sky=user_dict["daySky"],
+                    oheng_wood=user_dict["ohengWood"],
+                    oheng_fire=user_dict["ohengFire"],
+                    oheng_earth=user_dict["ohengEarth"],
+                    oheng_metal=user_dict["ohengMetal"],
+                    oheng_water=user_dict["ohengWater"],
+                )
+            
+            try:
+                # 오늘의 일진 계산
+                iljin_data = await calculate_today_saju_iljin(user, db)
+                today_oheng_scores = iljin_data["today_oheng_percentages"]
+                cache_service.set_user_today_oheng(uid, today, today_oheng_scores)
+                
+            except Exception as e:
+                print(f"오행 계산 오류: {e}")
+                today_oheng_scores = {
+                    "ohengWood": 0.0, "ohengFire": 0.0, 
+                    "ohengEarth": 0.0, "ohengMetal": 0.0, "ohengWater": 0.0
+                }
+    
+    # 3. 최종 응답 생성: 계산된 오행 점수를 user_dict에 업데이트
+    user_dict.update({
         "ohengWood": today_oheng_scores.get("ohengWood", 0.0),
         "ohengFire": today_oheng_scores.get("ohengFire", 0.0),
         "ohengEarth": today_oheng_scores.get("ohengEarth", 0.0),
         "ohengMetal": today_oheng_scores.get("ohengMetal", 0.0),
         "ohengWater": today_oheng_scores.get("ohengWater", 0.0),
-    }
+    })
     
+    # 필드 필터링: 최종적으로 요청된 필드만 반환
     if fields:
+        # 요청된 필드 목록 재사용
         requested_fields = set(f.strip() for f in fields.split(","))
-        filtered_user = {k: v for k, v in user_dict.items() if k in requested_fields}
-        return filtered_user
-
+        user_dict = {k: v for k, v in user_dict.items() if k in requested_fields}
+    
     return user_dict
 
 @router.post("/generate-presigned-url")
@@ -81,56 +154,21 @@ async def generate_presigned_url(
 
     return {"presigned_url": presigned_url, "s3_key": s3_key}
 
-
-# PATCH: 내 정보 수정
-# @router.patch("/me")
-# async def patch_my_info(
-#     uid: str = Depends(verify_firebase_token),
-#     db: Session = Depends(get_db),
-#     s3_client = Depends(get_s3_client), 
-#     nickname: str = Form(None),
-#     profile_image_s3_key: str = Form(None)  # 브라우저가 업로드 후 전달
-# ):
-#     # DB에서 사용자 조회
-#     user = db.query(User).filter(User.firebase_uid == uid).first()
-#     if not user:
-#         raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
-
-#     # 만약 닉네임/이미지 둘 다 보내지 않았다면
-#     if not nickname and not profile_image_s3_key:
-#         raise HTTPException(status_code=400, detail="수정할 데이터가 없습니다.")
-
-#     # 닉네임 수정
-#     if nickname:
-#         user.nickname = nickname
-
-#     if profile_image_s3_key:
-#         # DB에 저장할 Public URL 생성
-#         user.profile_image = f"https://{S3_BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/{profile_image_s3_key}"
-        
-#     db.commit()
-#     db.refresh(user)
-
-#     return {
-#         "message": "회원 정보 수정 성공",
-#         "nickname": user.nickname,
-#         "profile_image": user.profile_image
-#     }
 # PATCH: 내 정보 수정
 @router.patch("/me")
 async def patch_my_info(
     uid: str = Depends(verify_firebase_token),
     db: Session = Depends(get_db),
     nickname: str = Form(None),
-    profile_image_s3_key: str = Form(None),  # 브라우저가 업로드 후 전달
-    # --- 생년월일/성별 관련 필드 ---
+    profile_image_s3_key: str = Form(None),
     gender: str = Form(None),
     birth_date: str = Form(None),      
     birth_time: str = Form(None),      
     birth_calendar: str = Form(None),  
     unknown_time: str = Form(None)     
-    # ----------------------------
 ):
+    cache_service = UserCacheService()
+
     user = db.query(User).filter(User.firebase_uid == uid).first()
     if not user:
         raise HTTPException(status_code=404, detail="등록되지 않은 사용자입니다.")
@@ -139,17 +177,17 @@ async def patch_my_info(
     if not has_update_data:
         raise HTTPException(status_code=400, detail="수정할 데이터가 없습니다.")
 
-    # 닉네임 및 프로필 이미지 수정 (기존 로직 유지)
+    # 닉네임 및 프로필 이미지 수정
     if nickname is not None:
         user.nickname = nickname
 
     if profile_image_s3_key:
         user.profile_image = f"https://{S3_BUCKET_NAME}.s3.{S3_REGION}.amazonaws.com/{profile_image_s3_key}"
         
-    # --- 사주 재계산 필요 여부 플래그 ---
+    # 사주 재계산 필요 여부 플래그
     is_saju_data_changed = False 
 
-    # --- 생년월일/달력 수정 로직 ---
+    # 생년월일/달력 수정 로직
     if gender and user.gender != gender:
         user.gender = gender
 
@@ -166,7 +204,7 @@ async def patch_my_info(
         user.birth_calendar = birth_calendar
         is_saju_data_changed = True # 변경됨
         
-    # --- 태어난 시간 수정 로직 ---
+    # 태어난 시간 수정 로직
     is_unknown_time = unknown_time == 'true'
     new_birth_time = None
     
@@ -193,6 +231,12 @@ async def patch_my_info(
     db.commit()
     db.refresh(user)
 
+    # 캐시 무효화
+    cache_service.invalidate_user_profile(uid)
+
+    # 새 데이터로 캐시 갱신
+    cache_service.set_user_profile(uid, user)
+    
     return {
         "message": "회원 정보 수정 성공",
         "nickname": user.nickname,
