@@ -753,20 +753,19 @@ async def create_chatroom(
     db.commit()
         
         
-    detailed_message_content = await get_initial_chat_message(uid, db)
-    detailed_message = ChatMessage(
-        room_id=chatroom.id,
-        role="assistant",
-        content=detailed_message_content,
-        sender_id="assistant",
-        message_type="hidden_initial",
-    )
-    db.add(detailed_message)
-    db.commit()
-
-
+    # detailed_message_content = await get_initial_chat_message(uid, db)
+    # detailed_message = ChatMessage(
+    #     room_id=chatroom.id,
+    #     role="assistant",
+    #     content=detailed_message_content,
+    #     sender_id="assistant",
+    #     message_type="hidden_initial",
+    # )
+    # db.add(detailed_message)
+    # db.commit()
     last_message_id = greeting_message.id
     initial_message_content = greeting_message_content
+
 
     chatroom.last_message_id = last_message_id
     db.add(chatroom)
@@ -1100,11 +1099,15 @@ async def send_message(
             lacking_oheng, strong_oheng_db, oheng_type, oheng_scores
         )
 
-        oheng_info_text = f"""
-        부족한 오행: {", ".join(lacking_oheng)}
-        강한 오행: {", ".join(strong_ohengs)}
-        조절 오행: {", ".join(control_ohengs)}
-        """
+        # oheng_info_text = f"""
+        # 부족한 오행: {", ".join(lacking_oheng)}
+        # 강한 오행: {", ".join(strong_ohengs)}
+        # 조절 오행: {", ".join(control_ohengs)}
+        # """
+        oheng_info_text = f"""lacking={",".join(lacking_oheng)}
+        strong={",".join(strong_ohengs)}
+        control={",".join(control_ohengs)}"""
+
 
         llm_output = generate_llm_response(
             conversation_history,
