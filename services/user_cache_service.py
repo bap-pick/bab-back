@@ -51,23 +51,44 @@ class UserCacheService:
         try:
             key = self._user_cache_key(uid)
             
-            profile = {
-                "id": user.id,
-                "firebase_uid": user.firebase_uid,
-                "email": user.email,
-                "nickname": user.nickname,
-                "gender": user.gender,
-                "birthDate": user.birth_date.isoformat() if user.birth_date else None,
-                "birthTime": user.birth_time.strftime("%H:%M") if user.birth_time else None,
-                "birthCalendar": user.birth_calendar,
-                "profileImage": user.profile_image,
-                "ohengWood": float(user.oheng_wood) if user.oheng_wood else 0.0,
-                "ohengFire": float(user.oheng_fire) if user.oheng_fire else 0.0,
-                "ohengEarth": float(user.oheng_earth) if user.oheng_earth else 0.0,
-                "ohengMetal": float(user.oheng_metal) if user.oheng_metal else 0.0,
-                "ohengWater": float(user.oheng_water) if user.oheng_water else 0.0,
-                "daySky": user.day_sky,
-            }
+            # User 객체인 경우와 dict인 경우를 구분하여 처리
+            if isinstance(user, User):
+                profile = {
+                    "id": user.id,
+                    "firebase_uid": user.firebase_uid,
+                    "email": user.email,
+                    "nickname": user.nickname,
+                    "gender": user.gender,
+                    "birthDate": user.birth_date.isoformat() if user.birth_date else None,
+                    "birthTime": user.birth_time.strftime("%H:%M") if user.birth_time else None,
+                    "birthCalendar": user.birth_calendar,
+                    "profileImage": user.profile_image,
+                    "ohengWood": float(user.oheng_wood) if user.oheng_wood else 0.0,
+                    "ohengFire": float(user.oheng_fire) if user.oheng_fire else 0.0,
+                    "ohengEarth": float(user.oheng_earth) if user.oheng_earth else 0.0,
+                    "ohengMetal": float(user.oheng_metal) if user.oheng_metal else 0.0,
+                    "ohengWater": float(user.oheng_water) if user.oheng_water else 0.0,
+                    "daySky": user.day_sky,
+                }
+            elif isinstance(user, dict):
+                # dict인 경우 그대로 사용 (필요한 변환만 수행)
+                profile = {
+                    "email": user.get("email"),
+                    "nickname": user.get("nickname"),
+                    "gender": user.get("gender"),
+                    "birthDate": user["birthDate"].isoformat() if isinstance(user.get("birthDate"), date) else user.get("birthDate"),
+                    "birthTime": user["birthTime"].strftime("%H:%M") if isinstance(user.get("birthTime"), dt_time) else user.get("birthTime"),
+                    "birthCalendar": user.get("birthCalendar"),
+                    "profileImage": user.get("profileImage"),
+                    "ohengWood": float(user.get("ohengWood", 0.0)),
+                    "ohengFire": float(user.get("ohengFire", 0.0)),
+                    "ohengEarth": float(user.get("ohengEarth", 0.0)),
+                    "ohengMetal": float(user.get("ohengMetal", 0.0)),
+                    "ohengWater": float(user.get("ohengWater", 0.0)),
+                    "daySky": user.get("daySky"),
+                }
+            else:
+                raise ValueError(f"Unsupported type for user: {type(user)}")
             
             # JSON으로 직렬화하여 저장
             self.redis_client.setex(
