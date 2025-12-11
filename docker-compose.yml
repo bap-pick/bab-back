@@ -1,13 +1,13 @@
 services:
   app:
-    image: yooseohyeon/bapick-app:latest 
+    image: yooseohyeon/bapick-app:latest
     container_name: fastapi
     ports:
       - "8000:8000"
-    
+
     env_file:
       - .env
-      
+
     volumes:
       - /home/ec2-user/firebase_key.json:/tmp/firebase-key.json:ro
       - /home/ec2-user/kure-v1-onnx:/app/kure-v1-onnx
@@ -20,18 +20,18 @@ services:
     image: yooseohyeon/my-chroma-repo:v1.1
     container_name: bapick_chroma
     ports:
-      - "8001:8000" 
+      - "8001:8000"
     volumes:
-      - /home/ec2-user/chroma_data:/data 
+      - /home/ec2-user/chroma_data:/data
     restart: always
 
   redis:
     image: redis:7-alpine
     container_name: bapick_redis
     ports:
-      - "6379:6379" 
+      - "6379:6379"
     volumes:
-      - redis_data:/data 
+      - redis_data:/data
     restart: always
 volumes:
   chroma_data:
