@@ -9,7 +9,7 @@ services:
       - .env
       
     volumes:
-      - ./mykey.json:/app/mykey.json
+      - /home/ec2-user/mykey.json:/tmp/firebase-key.json
       - /home/ec2-user/kure-v1-onnx:/app/kure-v1-onnx
     depends_on:
       - chromadb
