@@ -529,12 +529,14 @@ async def handle_websocket_message(
             강한 오행: {", ".join(strong_ohengs)}
             조절 오행: {", ".join(control_ohengs)}
             """
+            
+            detailed_message_content = await get_initial_chat_message(uid, db)
 
             llm_output = generate_llm_response(
                 conversation_history,
                 user_message_for_llm,
                 current_recommended_foods=current_foods,
-                oheng_info_text=oheng_info_text,
+                oheng_info_text=detailed_message_content,
             )
 
             print("🤖 LLM OUTPUT:", llm_output)
@@ -1105,12 +1107,13 @@ async def send_message(
         강한 오행: {", ".join(strong_ohengs)}
         조절 오행: {", ".join(control_ohengs)}
         """
+        detailed_message_content = await get_initial_chat_message(uid, db)
 
         llm_output = generate_llm_response(
             conversation_history,
             user_message_for_llm,
             current_recommended_foods=current_foods,
-            oheng_info_text=oheng_info_text,
+            oheng_info_text=detailed_message_content,
         )
 
         # 4) LLM 응답에 MENU_SELECTED → 위치 선택 메시지

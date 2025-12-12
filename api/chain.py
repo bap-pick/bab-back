@@ -52,7 +52,7 @@ OHAENG_FOOD_LISTS = {
         "치킨", "후라이드치킨", "간장치킨", "닭백숙", "오리백숙", "순대국",
         "순두부", "두부조림", "계란찜", "계란국", "어묵탕", "무국",
         "콩나물국밥", "생선까스", "두부구이", "도가니탕", "닭죽", "흰죽",
-        "유린기", "치킨커틀릿", "크림우동", "오징어순대", "양파튀김", "명란파스타"
+        "유린기", "치킨커틀릿", "크림우동", "오징어순대", "명란파스타"
     ],
     '수(水)': [
         "초밥", "물회", "해물파스타", "해물볶음밥", "해물찜", "오징어덮밥",
@@ -74,11 +74,11 @@ def normalize_to_hangul(oheng_name: str) -> str:
 
 # 오행별 일반화 설명
 OHAENG_DESCRIPTION = {
-    "목(木)": "상큼하고 신선한 느낌의 음식, 야채가 들어간 가벼운 메뉴",
+    "목(木)": "상큼하고 신선한 느낌의 음식, 야채가 들어간 가벼운 메뉴, 신맛, 채소, 나물",
     "화(火)": "매콤하거나 자극적인 맛의 음식",
-    "토(土)": "든든하고 안정감 있는 음식",
-    "금(金)": "고소하고 짭짤한 맛의 음식",
-    "수(水)": "시원하고 촉촉한 느낌의 음식, 국물이나 음료류"
+    "토(土)": "든든하고 안정감 있는 음식, 단 맛, 곡물, 탄수화물",
+    "금(金)": "고소하고 담백한 맛의 음식, 흰색 음식, 바삭한 음식",
+    "수(水)": "시원하고 짠 맛의 음식, 국물이나 음료류, 해산물"
 }
 
 MAX_MESSAGES = 10  # 최근 대화 10개만 기억
@@ -99,14 +99,14 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
         hangul_name = re.sub(r'\([^)]*\)', '', oheng).strip()
         if hangul_name and oheng in OHAENG_FOOD_LISTS: # 유효한 키인지 확인
             unique_ohaeng_map[hangul_name] = oheng
-            
+
     unique_control_oheng = list(unique_ohaeng_map.values())
     control_oheng_str = '와 '.join(unique_control_oheng) 
     lacking_oheng_set = set(lacking_oheng)
     control_oheng_set = set(unique_control_oheng) 
     strong_oheng_str = '와 '.join(strong_oheng)
     lacking_oheng_str = '와 '.join(lacking_oheng)
-    
+
     # 1. 부족 오행 조언
     lacking_advice = "" 
     if lacking_oheng: 
@@ -115,12 +115,12 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
             foods = get_food_recommendations_for_ohaeng(oheng) 
             description = OHAENG_DESCRIPTION.get(oheng, "")
             lacking_parts.append(f"{oheng} 기운이 약하니 {description}인 {foods}을(를) 추천해")
-            
+
         lacking_foods_str = '과 '.join(lacking_parts)
         # 첫 번째 문장: 부족 오행 기운 보충 조언
         lacking_advice = lacking_foods_str + ". "
-    
-    
+
+
     # 2. 과다 및 제어 오행
     control_advice = ""
     # 부족 오행과 제어 오행이 겹치는지 확인
@@ -130,7 +130,7 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
             f"특히, 부족한 {lacking_oheng_str} 기운은 강한 {strong_oheng_str}을 조절해주는 딱 맞는 상극 오행이기도 해! "
             f"따라서 {lacking_oheng_str} 기운의 음식을 먹으면 부족한 기운도 채우고, 넘치는 기운까지 잡을 수 있어 😉"
         )
-    
+
     elif strong_oheng and unique_control_oheng:
         # 겹치지 않는 경우
         control_food_parts = []
@@ -140,30 +140,30 @@ def generate_concise_advice(lacking_oheng: List[str], strong_oheng: List[str], c
         control_foods_str = ', '.join(control_food_parts)
         prefix = "그리고 " if lacking_advice else "" 
         control_advice = (
-            f"{prefix}강한 {strong_oheng_str} 기운은 {control_oheng_str} 기운이 눌러줄 수 있어. "
-            f" 기운들이 균형을 이루게 해 줄 {control_foods_str}을 추천해."
+            f"{prefix}강한 {strong_oheng_str} 기운은 상극인 {control_oheng_str} 기운으로 눌러줄 수 있어. "
+            f"따라서 강한 {strong_oheng_str} 기운을 조절해주는 {control_foods_str}을 추천해."
         )
 
     # 3. 최종 메시지 조합
-    final_message = lacking_advice + control_advice + "<br>여기서 먹고 싶은 메뉴 하나 고르면 식당까지 바로 추천해줄게!"
+    final_message = lacking_advice + control_advice
     return final_message
 
 # 초기 메시지 반환
 async def get_initial_chat_message(uid: str, db: Session) -> str:
     # 사주 데이터 불러오기
     lacking_oheng, strong_oheng_db, oheng_type, oheng_scores = await _get_oheng_analysis_data(uid, db)
-    
+
     # 메시지 생성 로직 (strong_ohengs 정보를 가져옴)
     headline, advice, recommended_ohengs_weights, control_ohengs, strong_ohengs = define_oheng_messages(
         lacking_oheng, strong_oheng_db, oheng_type, oheng_scores
     )
-    
+
     initial_message = generate_concise_advice(
         lacking_oheng=lacking_oheng, 
         strong_oheng=strong_ohengs, 
         control_oheng=control_ohengs 
     )
-    
+
     return initial_message
 
 
@@ -185,7 +185,7 @@ def build_conversation_history(db: Session, chatroom_id: int) -> str:
         if msg.message_type == "hidden_initial":
             continue
         conversation_history += f"{msg.content}\n"
-    
+
     return conversation_history
 
 
@@ -230,7 +230,7 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float=Non
             "final_message": "다른 메뉴도 추천해줄까?",
             "count": 0
         }
-    
+
 
     # search_query = f"'{menu_name}' 메뉴를 판매하는 맛집 식당"
 
@@ -269,7 +269,7 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float=Non
         #     "final_message": "다른 메뉴도 추천해줄까?",
         #     "count": 0
         # }
-        
+
     # 새로운 필터링 로직
 
 
@@ -277,15 +277,15 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float=Non
     restaurant_ids = []
     # chroma_results_map = {}
     chroma_map = {}
-    
+
     menu_norm = menu_name.replace(" ", "").lower()  # 공백 제거, 소문자 변환
-    
-    
+
+
     for doc in restaurant_docs:
         rid = doc.metadata.get("restaurant_id")
         if not rid:
             continue
-        
+
         # 중복 체크
         # if restaurant_id in restaurant_ids_from_chroma:
         #     continue
@@ -299,13 +299,13 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float=Non
 
     if not restaurant_ids:
         return build_no_result(menu_name)
-    
-    
+
+
     # DB 에서 식당 정보 로드
     db_list = db.query(Restaurant).filter(Restaurant.id.in_(restaurant_ids)).all()
     db_map = {r.id: r for r in db_list}
 
-            
+
     final_candidates = []
     # temp_restaurants_with_distance = []
     MAX_DIST = 2.0
@@ -352,7 +352,7 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float=Non
 
     final_candidates.sort(key=lambda x: x["distance_km"])
     recommended = final_candidates[:3]
-    
+
     if recommended:
         return {
             "initial_message": f"그러면 **{menu_name}** 먹으러 갈 식당 추천해줄게! 😋",
@@ -363,26 +363,26 @@ def search_and_recommend_restaurants(menu_name: str, db: Session, lat: float=Non
 
     return build_no_result(menu_name)
 
-    
-    
-    
+
+
+
 # 단체 채팅에서 사용자 메시지가 메뉴 추천 요청인지 감지하는 함수
 def is_initial_recommendation_request(user_message: str, conversation_history: str) -> bool:
     # 대화 기록에서 봇의 상세 추천 메시지 패턴 확인
     has_bot_recommendation = bool(
         re.search(r"기운이 약하니|기운은.*조절해주는|기운으로 눌러주면", conversation_history)
     )
-    
+
     # 봇의 추천 메시지가 있다면 return
     if has_bot_recommendation:
         return False
-    
+
     # 추천 관련 키워드
     recommendation_keywords = [
         "골라", "추천", "뭐 먹", "뭘 먹", "먹을거", "먹을 거",
         #"점심", "저녁", "아침", "식사", "맛집", "메뉴", "음식",
     ]
-    
+
     # 사용자의 메시지에 추천 관련 키워드가 있는지 확인
     user_message_lower = user_message.lower()
     return any(keyword in user_message_lower for keyword in recommendation_keywords)
@@ -395,8 +395,7 @@ def generate_llm_response(
     oheng_info_text: str = ""
     ) -> str:
     # 지금까지 추천한 메뉴 목록을 문자열로 변환
-    current_foods_str = ', '.join(current_recommended_foods or [])
-    print(f"[DEBUG] current_recommended_foods: {current_foods_str}")
+    print(f"[DEBUG] oheng_info_text: {oheng_info_text}")
 
     oheng_block = ""
     if oheng_info_text:
@@ -407,14 +406,15 @@ def generate_llm_response(
                     """    
 
     prompt = f"""
-    너는 사용자에게 맞춰 음식을 추천해주는 챗봇 '밥풀이'야. 
-    너의 목표는 사용자에게 부족한오행 기운을 채워줄 수 있는 음식을 추천하는 거야. 
+    너는 오늘의 운세와 오행 기운에 맞춰 음식을 추천해주는 챗봇 '밥풀이'야. 
+    너의 목표는 사용자의 운세에 부족한 오행 기운을 채워줄 수 있는 음식을 추천하는 거야. 
     첫 인사는 절대 반복금지. 문장은 간결하게, 항상 반말로 대답해.
+    한국어로만 대답해. 영어, 아랍어 등 한국어 이외 다른 언어로는 대답하지 마.
     
     
     아래 [OHAENG_DATA] 블록은 백엔드에서 너만 보는 데이터야.
     사용자가 직접 말한 내용이 아니고, 너 혼자 참고만 해야 하는 정보야.
-    이 정보 때문에 "이미 사용자가 음식을 먹었다"고 가정하면 안돼.
+    이 정보 때문에 "이미 사용자가 음식을 선택했다"고 가정하면 안돼.
     
     {oheng_block}
 
@@ -428,7 +428,7 @@ def generate_llm_response(
     {user_message}
 
     규칙:
-    1) 사용자가 명확한 음식 이름을 말했을 때만 intent = "SELECT" 로 판단해야 한다.
+    1) 사용자가 특정 음식을 선택했을 때만 intent = "SELECT" 로 판단해야 한다.
     2) intent가 SELECT라면 반드시 아래 형식으로 출력한다:
     [MENU_SELECTED:사용자말한음식명]
     3) 음식 추천과 상관없는 대화라면 자연스럽게 음식이야기로 유도한다.
@@ -448,7 +448,7 @@ def generate_llm_response(
     )
 
     llm_response_text = response.text.strip()
-        
+
     return llm_response_text
 
 
