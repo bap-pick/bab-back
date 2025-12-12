@@ -1,5 +1,22 @@
+import random
 from typing import List, Tuple, Dict
 from collections import Counter
+
+OHENG_ATTRIBUTES = {
+    '목(木)': {'food': '채소류, 신맛 음식'},
+    '화(火)': {'food': '매운맛, 쓴맛 음식'},
+    '토(土)': {'food': '곡물류, 단맛 음식'},
+    '금(金)': {'food': '육류, 바삭한 음식'},
+    '수(水)': {'food': '해산물, 짠맛 음식'},
+}
+
+CLOSING_MESSAGES = [
+    "마음속까지 따뜻해지는 평온한 하루를 보낼 거예요!",
+    "긍정적인 에너지가 온몸에 가득 찰 거예요!",
+    "오늘이야말로 행운의 주인공이 되는 날이 될 거예요!",
+    "평온한 하루가 될 거예요!",
+    "순조로운 하루를 보낼 거예요!",
+]
 
 # 과다 오행의 상극 오행 반환: 상극 관계(木극土, 火극金, 土극水, 金극木, 水극火)
 def get_counter_oheng(oheng: str) -> str: 	
@@ -20,97 +37,170 @@ def _get_oheng_string_list(oheng_list: List[str]) -> str:
 def _update_oheng_counter(oheng_counter: Counter, ohengs: List[str]):
     for oheng in ohengs:
         oheng_counter[oheng] += 1
+
+# 오행별 음식 정보를 포맷팅하여 반환
+def _get_formatted_food_string(oheng_name: str) -> str:
+    food_list_str = OHENG_ATTRIBUTES.get(oheng_name, {}).get('food', '')
+    
+    if not food_list_str:
+        return "관련 음식"
+    
+    foods = [f.strip() for f in food_list_str.split(',') if f.strip()]
+    
+    if len(foods) > 2:
+        foods = foods[:2]
+        
+    return '·'.join(foods)
+
 def define_oheng_messages(
     lacking: List[str], 
     strong: List[str], 
     oheng_type: str,
-    final_oheng_scores: Dict[str, float] # 추가된 인수
+    final_oheng_scores: Dict[str, float]
 ) -> Tuple[str, str, Dict[str, int], List[str], List[str]]:
     analysis_headline = ""
     advice_parts = [] 
     recommended_oheng_counter = Counter()
-    
-    # 제어 오행 (과도 오행의 상극 오행)을 담을 리스트 
     control_ohengs: List[str] = []
     
     # 제목 생성 로직
     if oheng_type == "균형형":
-        # 균형형의 제목은 아래 메시지 생성 로직에서 동적으로 결정됩니다.
         analysis_headline = "" 
-    else: # 무형, 치우침형
-        # 제목을 부족/과다 기운 기준으로 다시 생성
+    else: 
         lacking_str = _get_oheng_string_list(lacking)
         strong_str = _get_oheng_string_list(strong)
         
         if lacking and strong:
-            analysis_headline = f"{strong_str} 기운이 강하고, {lacking_str} 기운이 부족해요!"
+            analysis_headline = f"{strong_str} 기운이 강하고, {lacking_str} 기운이 부족한 하루예요!"
         elif lacking:
             analysis_headline = f"{lacking_str} 기운이 부족한 하루예요!"
         else:
             analysis_headline = f"{strong_str} 기운이 강한 하루예요!"
 
     # 추천 메시지 생성
+    advice_parts = [] # 문장 분리된 조언을 담을 리스트
+
     if oheng_type == "균형형":
         
-        # 5개의 오행 수치의 평균 (100 / 5 = 20)
         HENG_AVERAGE = 20.0 
-        
-        lacking_name = lacking[0]  # 가장 낮은 오행 
-        strong_name = strong[0]    # 가장 높은 오행
-            
+        lacking_name = lacking[0] 
+        strong_name = strong[0] 
         diff_lacking = abs(final_oheng_scores.get(lacking_name, 0) - HENG_AVERAGE) 
         diff_strong = abs(final_oheng_scores.get(strong_name, 0) - HENG_AVERAGE) 
-            
-        advice_parts.append(f"오늘은 오행이 조화를 이루어, 평온한 기운이 감도는 날입니다.")
+        
+        random_closing = random.choice(CLOSING_MESSAGES) # 랜덤 메시지 선택
 
-        # 부족 오행이 더 두드러진 경우 (평균에서 더 멀리 떨어짐) -> 보충 전략
         if diff_lacking >= diff_strong:
-                
-                analysis_headline = f"오행이 안정된 하루, {lacking_name} 기운이 가장 약해요." 
-                
-                advice_parts.append(
-                    f"다만 {lacking_name} 기운이 조금 약하게 나타나, 이 기운의 색과 음식으로 균형을 맞추면 하루가 더욱 순조롭게 흘러갈 거예요."
-                )
-                
-                _update_oheng_counter(recommended_oheng_counter, [lacking_name])
-                control_ohengs.append(lacking_name)
-                
-        # 강한 오행이 더 두드러진 경우 (평균에서 더 멀리 떨어짐) -> 억제 전략
+            # 부족 오행이 더 두드러진 경우 (보충 전략)
+            lacking_food_str = _get_formatted_food_string(lacking_name)
+            analysis_headline = f"오행이 안정된 하루, {lacking_name} 기운이 가장 약해요." 
+            
+            # 균형형의 보충 조언
+            advice_parts.append(
+                f"다만 {lacking_name} 기운은 {lacking_food_str}으로 보충해 보세요! "
+            )
+            advice_parts.append(random_closing)
+
+            _update_oheng_counter(recommended_oheng_counter, [lacking_name])
+            control_ohengs.append(lacking_name)
+            
         else: 
-                control_name = get_counter_oheng(strong_name) # 강한 오행의 상극 
-                
-                analysis_headline = f"오행이 안정된 하루, {strong_name} 기운이 살짝 강해요." 
-                
-                advice_parts.append(
-                    f"다만 {strong_name} 기운이 조금 강하게 작용해, 상극 오행인 {control_name} 기운의 색과 음식으로 균형을 맞추면 하루가 더욱 순조롭게 흘러갈 거예요."
-                )
-                _update_oheng_counter(recommended_oheng_counter, [control_name])
-                control_ohengs.append(control_name)
-    
+            # 강한 오행이 더 두드러진 경우 (억제 전략)
+            control_name = get_counter_oheng(strong_name) 
+            control_food_str = _get_formatted_food_string(control_name)
+            
+            analysis_headline = f"오행이 안정된 하루, {strong_name} 기운이 살짝 강해요." 
+            
+            # 균형형의 억제 조언
+            advice_parts.append(
+                f"다만 {strong_name} 기운이 조금 강해, 상극인 {control_name} 기운의 색과 음식({control_food_str})으로 눌러 균형을 맞추면 "
+            )
+            advice_parts.append(random_closing)
+
+            _update_oheng_counter(recommended_oheng_counter, [control_name])
+            control_ohengs.append(control_name)
+
     # 무형/치우침형: 부족 오행 보충 + 과다 오행 상극 억제
-    elif oheng_type == "무형" or oheng_type == "치우침형":
+    if oheng_type == "무형" or oheng_type == "치우침형":
         
-        if lacking:
-            lacking_str = _get_oheng_string_list(lacking)
-            advice_parts.append(f"부족한 {lacking_str} 기운을 보충해 에너지를 채워주세요.")
-            _update_oheng_counter(recommended_oheng_counter, lacking)
+        random_closing = random.choice(CLOSING_MESSAGES)
         
+        # 1. 제어 오행 목록을 먼저 계산
         if strong:
-            strong_str = _get_oheng_string_list(strong)
-            
             control_ohengs = [get_counter_oheng(o) for o in strong]
-            control_str = _get_oheng_string_list(control_ohengs)
             
-            advice_parts.append(f"강한 {strong_str} 기운은 상극 오행인 {control_str} 기운으로 눌러 조화를 이루면 좋아요!")
-            _update_oheng_counter(recommended_oheng_counter, control_ohengs)
-        
-        
-        # 기운 편차 크다고 시작하는 문장
-        if len(advice_parts) > 0:
-            advice_parts.insert(0, f"오늘은 기운의 편차가 커서 에너지의 흐름이 불안정할 수 있습니다.")
-        
-    # 최종 추천 메시지 문자열 생성: 문장별로 띄어쓰기를 추가하여 자연스럽게 연결
-    advice_message = " ".join(advice_parts)
+        # 2. 부족 오행과 제어 오행이 '단일' 오행으로 겹치는지 확인
+        is_oheng_overlapped = (
+            len(lacking) == 1 and 
+            len(strong) == 1 and 
+            lacking[0] == control_ohengs[0]
+        )
+            
+        if is_oheng_overlapped:
+            # 겹치는 경우: 한 문장으로 통합
+            oheng_name = lacking[0] 
+            strong_name = strong[0] 
+            food_str = _get_formatted_food_string(oheng_name)
+
+            # 통합 메시지 생성
+            combined_advice = (
+                f"오늘은 {food_str}을 추천해요! {food_str}으로 강한 {strong_name} 기운을 누르고 부족한 {oheng_name} 기운을 채우면 "
+            )
+            advice_parts.append(combined_advice + random_closing)
+            
+            _update_oheng_counter(recommended_oheng_counter, [oheng_name])
+
+        else:
+            # 겹치지 않는 경우
+            
+            lacking_advice = ""
+            strong_advice = ""
+            
+            # a. 부족 오행 조언 생성 (첫 번째 문장)
+            if lacking:
+                lacking_str = _get_oheng_string_list(lacking)
+                
+                if len(lacking) == 1:
+                    lacking_food_str = _get_formatted_food_string(lacking[0])
+                    lacking_advice = f"부족한 {lacking_str} 기운은 {lacking_food_str}으로 보충하면 좋아요!"
+                else:
+                    lacking_advice = f"부족한 {lacking_str} 기운을 보충하면 좋아요!"
+                    
+                _update_oheng_counter(recommended_oheng_counter, lacking)
+            
+            # b. 강한 오행 조언 생성 (두 번째 문장)
+            if strong:
+                strong_str = _get_oheng_string_list(strong)
+                control_str = _get_oheng_string_list(control_ohengs)
+                
+                if len(control_ohengs) == 1 and len(strong) == 1:
+                    control_food_str = _get_formatted_food_string(control_ohengs[0])
+                    strong_advice = f"강한 {strong_str} 기운은 상극인 {control_str} 기운을 더해주는 {control_food_str}으로 눌러 균형을 맞추면 "
+                else:
+                    strong_advice = f"강한 {strong_str} 기운은 상극 오행인 {control_str} 기운으로 눌러 균형을 맞추면 "
+                    
+                _update_oheng_counter(recommended_oheng_counter, control_ohengs)
+                
+                # 두 번째 문장에 랜덤 메시지를 붙여 완료
+                strong_advice += random_closing
+
+            # 조언 문장을 합침
+            if lacking_advice:
+                advice_parts.append(lacking_advice)
+            if strong_advice:
+                advice_parts.append(strong_advice)
+
+    # 제목 생성
+    lacking_str = _get_oheng_string_list(lacking)
+    strong_str = _get_oheng_string_list(strong)
+            
+    if lacking and strong:
+        analysis_headline = f"{strong_str} 기운이 강하고, {lacking_str} 기운이 부족한 하루예요!"
+    elif lacking:
+        analysis_headline = f"{lacking_str} 기운이 부족한 하루예요!"
+    else:
+        analysis_headline = f"{strong_str} 기운이 강한 하루예요!"
     
-    # strong_ohengs는 strong 리스트와 동일
+    advice_message = " ".join(advice_parts)
+
     return analysis_headline, advice_message, dict(recommended_oheng_counter), control_ohengs, strong
