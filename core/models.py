@@ -109,8 +109,8 @@ class Restaurant(Base):
     address = Column(String(200), nullable=False)
     phone = Column(String(20), nullable=True)
     image = Column(String(2000), nullable=True) 
-    latitude = Column(Integer, nullable=True)
-    longitude = Column(Integer, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     
     menus = relationship("Menu", back_populates="restaurant")
     hours = relationship("OpeningHour", back_populates="restaurant")
