@@ -273,14 +273,32 @@ def get_foods_by_condition(
         oheng_foods.update(OHAENG_FOOD_LISTS.get(oheng, []))
     
     # 3. 교집합 (조건 + 오행 둘 다 만족)
-    matched_foods = condition_foods & oheng_foods
+    matched_foods_by_intersection = condition_foods & oheng_foods
     
-    # 4. 교집합이 없으면 조건만 만족하는 음식이라도 반환
-    if not matched_foods:
-        matched_foods = condition_foods
+    # 4. 결과 리스트 초기화
+    result_list = list(matched_foods_by_intersection)
     
-    # 5. 제외 목록 제거
-    result = [f for f in matched_foods if f not in exclude_foods]
+    # 5. 추천할 음식이 3개 미만일 경우, '조건만 만족하는 음식'으로 채우기
+    if len(result_list) < 3:
+        
+        # '조건만 만족'하지만 '오행 조건은 충족하지 못함' 또는 '오행 정보가 없음' 음식
+        supplementary_foods = condition_foods - matched_foods_by_intersection
+        
+        # 제외 목록에 없는 음식만 필터링
+        supplements_to_add = [
+            f for f in supplementary_foods 
+            if f not in result_list and f not in exclude_foods
+        ]
+        
+        # 무작위로 섞어서 추가할 음식을 고르게 선택
+        random.shuffle(supplements_to_add)
+        
+        # 필요한 개수만큼 추가 (총 3개가 되도록)
+        needed_count = 3 - len(result_list)
+        result_list.extend(supplements_to_add[:needed_count])
+    
+    # 6. 최종 제외 목록 제거
+    result = [f for f in result_list if f not in exclude_foods]
     
     return result
 
