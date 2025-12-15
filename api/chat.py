@@ -15,11 +15,13 @@ from core.firebase_auth import verify_firebase_token, get_user_uid_from_websocke
 from core.websocket_manager import ConnectionManager, get_connection_manager
 
 from api.chain import (
+    UserIntent,
+    detect_user_intent_improved,
+    generate_llm_response_with_intent,
     build_conversation_history,
-    generate_llm_response,
-    get_initial_chat_message,
     search_and_recommend_restaurants,
-    get_latest_recommended_foods,
+    get_all_recommended_foods,
+    post_process_select_intent
 )
 
 from api.saju import _get_oheng_analysis_data
@@ -413,7 +415,6 @@ async def handle_restaurant_recommendation(
 # -------------------------------
 # WebSocket 메시지 처리
 # -------------------------------
-
 async def handle_websocket_message(
     room_id: int,
     uid: str,
@@ -453,7 +454,7 @@ async def handle_websocket_message(
             json.dumps({"type": "new_message", "message": user_msg_json}),
         )
 
-    # 1) LOCATION_SELECTED 처리 (LLM 호출 전에)
+    # 1) LOCATION_SELECTED 처리
     if is_location_message:
         location_result = process_location_selection_tag(
             db, chatroom, message_content, chat_message.id
@@ -499,123 +500,123 @@ async def handle_websocket_message(
 
         conversation_history = build_conversation_history(db, room_id)
 
-        print("\n============================")
+        print("\n" + "="*50)
         print("📩 USER MESSAGE:", user_message_for_llm)
-        print("📜 HISTORY:", conversation_history)
-        print("============================\n")
+        print("📜 HISTORY:", conversation_history[:200] + "..." if len(conversation_history) > 200 else conversation_history)
+        print("="*50 + "\n")
 
-        current_foods = get_latest_recommended_foods(db, room_id)
+        # 이미 추천한 음식 목록
+        previous_bot_talks = conversation_history.count("밥풀이:")
+        recommended_foods = []
+        if previous_bot_talks > 0:
+            recommended_foods = get_all_recommended_foods(db, room_id)
+            print(f"🚫 이미 추천한 음식: {recommended_foods}")
 
-        try:
-            # 오행 정보 로딩
-            lacking_oheng, strong_oheng_db, oheng_type, oheng_scores = (
-                await _get_oheng_analysis_data(uid, db)
-            )
-            (
-                headline,
-                advice,
-                recommended_ohengs_weights,
-                control_ohengs,
-                strong_ohengs,
-            ) = define_oheng_messages(
-                lacking_oheng,
-                strong_oheng_db,
-                oheng_type,
-                oheng_scores
-            )
-
-            oheng_info_text = f"""
-            부족한 오행: {", ".join(lacking_oheng)}
-            강한 오행: {", ".join(strong_ohengs)}
-            조절 오행: {", ".join(control_ohengs)}
-            """
-            
-            detailed_message_content = await get_initial_chat_message(uid, db)
-
-            llm_output = generate_llm_response(
-                conversation_history,
-                user_message_for_llm,
-                current_recommended_foods=current_foods,
-                oheng_info_text=detailed_message_content,
-            )
-
-            print("🤖 LLM OUTPUT:", llm_output)
-
-        except Exception as llm_error:
-            print("💥 LLM 호출 오류:", llm_error)
-            await manager.broadcast(
-                room_id,
-                json.dumps(
-                    {
-                        "type": "new_message",
-                        "message": {
-                            "role": "assistant",
-                            "sender_name": "밥풀이",
-                            "content": "잠깐 오류났어 😅 다시 한번 말해줄래?",
-                            "message_type": "text",
-                        },
-                    }
-                ),
-            )
-            return
-
-        # 4) LLM 응답에 MENU_SELECTED 태그가 있는 경우 → 위치 선택 단계로
-        location_select_reply = process_menu_selection(db, chatroom, llm_output)
-        if location_select_reply:
-            assistant_message = (
-                db.query(ChatMessage)
-                .filter(ChatMessage.id == chatroom.last_message_id)
-                .first()
-            )
-            if assistant_message:
-                bot_msg_json = chat_message_to_json(
-                    assistant_message, "밥풀이", uid
-                )
-                await manager.broadcast(
-                    room_id,
-                    json.dumps(
-                        {"type": "new_message", "message": bot_msg_json}
-                    ),
-                )
-            return
-
-        # 5) 일반 텍스트 응답
-        assistant_message = ChatMessage(
-            room_id=room_id,
-            sender_id="assistant",
-            role="assistant",
-            content=llm_output,
-            message_type="text",
-            timestamp=datetime.datetime.utcnow(),
+        # 오행 정보
+        lacking_oheng, strong_oheng_db, oheng_type, oheng_scores = (
+            await _get_oheng_analysis_data(uid, db)
         )
-        db.add(assistant_message)
-        db.commit()
-        db.refresh(assistant_message)
-
-        bot_msg_json = chat_message_to_json(
-            assistant_message, "밥풀이", uid
-        )
-        await manager.broadcast(
-            room_id,
-            json.dumps({"type": "new_message", "message": bot_msg_json}),
+        _, _, _, control_ohengs, strong_ohengs = define_oheng_messages(
+            lacking_oheng, strong_oheng_db, oheng_type, oheng_scores
         )
 
-        chatroom.last_message_id = assistant_message.id
-        db.add(chatroom)
-        db.commit()
+        print(f"🔮 오행 상태 - 부족:{lacking_oheng}, 강함:{strong_ohengs}, 조절:{control_ohengs}")
 
-    except Exception as e:
-        print("🔥 전체 처리 오류:", e)
+        # 메시지 의도 감지
+        intent, intent_data = detect_user_intent_improved(
+            user_message_for_llm,
+            conversation_history,
+            recommended_foods
+        )
+        
+        print(f"🎯 감지된 의도: {intent.value}, 추가정보: {intent_data}")
+
+        # 의도 기반 LLM 호출
+        llm_output = generate_llm_response_with_intent(
+            intent=intent,
+            intent_data=intent_data,
+            conversation_history=conversation_history,
+            user_message=user_message_for_llm,
+            lacking_oheng=lacking_oheng,
+            strong_oheng=strong_ohengs,
+            control_oheng=control_ohengs,
+            current_recommended_foods=recommended_foods,
+        )
+
+        print(f"🤖 LLM OUTPUT: {llm_output}\n")
+
+        # 후처리: SELECT 의도가 있는지 확인
+        if intent == UserIntent.SELECT_MENU and intent_data.get("menu"):
+            # 사용자가 메뉴를 선택했으면 태그 추가
+            llm_output = f"[MENU_SELECTED:{intent_data['menu']}]"
+        else:
+            # 혹시 LLM이 놓쳤을 경우 후처리
+            llm_output = post_process_select_intent(llm_output, user_message_for_llm)
+
+        print(f"🤖 FINAL OUTPUT: {llm_output}\n")
+
+    except Exception as llm_error:
+        print("💥 LLM 호출 오류:", llm_error)
         await manager.broadcast(
             room_id,
             json.dumps(
                 {
-                    "type": "error",
-                    "message": "서버에서 오류가 발생했어 😭 다시 시도해줘!",
+                    "type": "new_message",
+                    "message": {
+                        "role": "assistant",
+                        "sender_name": "밥풀이",
+                        "content": "잠깐 오류났어 😅 다시 한번 말해줄래?",
+                        "message_type": "text",
+                    },
                 }
             ),
         )
+        return
 
+    # 4) LLM 응답에 MENU_SELECTED 태그가 있는 경우 → 위치 선택 단계로
+    location_select_reply = process_menu_selection(db, chatroom, llm_output)
+    if location_select_reply:
+        assistant_message = (
+            db.query(ChatMessage)
+            .filter(ChatMessage.id == chatroom.last_message_id)
+            .first()
+        )
+        if assistant_message:
+            bot_msg_json = chat_message_to_json(
+                assistant_message, "밥풀이", uid
+            )
+            await manager.broadcast(
+                room_id,
+                json.dumps(
+                    {"type": "new_message", "message": bot_msg_json}
+                ),
+            )
+        return
+
+    # 5) 일반 텍스트 응답
+    assistant_message = ChatMessage(
+        room_id=room_id,
+        sender_id="assistant",
+        role="assistant",
+        content=llm_output,
+        message_type="text",
+        timestamp=datetime.datetime.utcnow(),
+    )
+    db.add(assistant_message)
+    db.commit()
+    db.refresh(assistant_message)
+
+    bot_msg_json = chat_message_to_json(
+        assistant_message, "밥풀이", uid
+    )
+    await manager.broadcast(
+        room_id,
+        json.dumps({"type": "new_message", "message": bot_msg_json}),
+    )
+
+    chatroom.last_message_id = assistant_message.id
+    db.add(chatroom)
+    db.commit()
 
 # -------------------------------
 # WebSocket 엔드포인트
@@ -754,19 +755,6 @@ async def create_chatroom(
     db.add(greeting_message)
     db.commit()
         
-        
-    detailed_message_content = await get_initial_chat_message(uid, db)
-    detailed_message = ChatMessage(
-        room_id=chatroom.id,
-        role="assistant",
-        content=detailed_message_content,
-        sender_id="assistant",
-        message_type="hidden_initial",
-    )
-    db.add(detailed_message)
-    db.commit()
-
-
     last_message_id = greeting_message.id
     initial_message_content = greeting_message_content
 
@@ -1077,44 +1065,58 @@ async def send_message(
                 MENTION_TAG, ""
             ).strip()
 
-        # 3) 기존 대화 내역 + 오행 + current_foods
-        conversation_history = build_conversation_history(
-            db, chatroom.id
-        )
+        # 3) 대화 기록 + 이미 추천한 음식
+        conversation_history = build_conversation_history(db, chatroom.id)
+        
+        previous_bot_talks = conversation_history.count("밥풀이:")
+        recommended_foods = []
+        if previous_bot_talks > 0:
+            recommended_foods = get_all_recommended_foods(db, chatroom.id)
 
-        print("\n============================")
-        print("📩 USER MESSAGE:", user_message_for_llm)
-        print("📜 HISTORY:", conversation_history)
-        print("============================\n")
+        print("\n" + "="*50)
+        print("📩 USER:", user_message_for_llm)
+        print("📜 HISTORY:", conversation_history[:200] + "...")
+        print(f"🚫 이미 추천: {recommended_foods}")
+        print("="*50 + "\n")
 
-        current_foods = get_latest_recommended_foods(db, chatroom.id)
-
+        # 오행 정보
         lacking_oheng, strong_oheng_db, oheng_type, oheng_scores = (
             await _get_oheng_analysis_data(uid, db)
         )
-        (
-            headline,
-            advice,
-            recommended_ohengs_weights,
-            control_ohengs,
-            strong_ohengs,
-        ) = define_oheng_messages(
+        _, _, _, control_ohengs, strong_ohengs = define_oheng_messages(
             lacking_oheng, strong_oheng_db, oheng_type, oheng_scores
         )
 
-        oheng_info_text = f"""
-        부족한 오행: {", ".join(lacking_oheng)}
-        강한 오행: {", ".join(strong_ohengs)}
-        조절 오행: {", ".join(control_ohengs)}
-        """
-        detailed_message_content = await get_initial_chat_message(uid, db)
-
-        llm_output = generate_llm_response(
-            conversation_history,
+        # 메시지 의도 감지
+        intent, intent_data = detect_user_intent_improved(
             user_message_for_llm,
-            current_recommended_foods=current_foods,
-            oheng_info_text=detailed_message_content,
+            conversation_history,
+            recommended_foods
         )
+        
+        print(f"🎯 의도: {intent.value}, 데이터: {intent_data}")
+
+        # 의도 기반 LLM 호출
+        llm_output = generate_llm_response_with_intent(
+            intent=intent,
+            intent_data=intent_data,
+            conversation_history=conversation_history,
+            user_message=user_message_for_llm,
+            lacking_oheng=lacking_oheng,
+            strong_oheng=strong_ohengs,
+            control_oheng=control_ohengs,
+            current_recommended_foods=recommended_foods,
+        )
+
+        print(f"🤖 LLM: {llm_output}")
+
+        # SELECT 의도 처리
+        if intent == UserIntent.SELECT_MENU and intent_data.get("menu"):
+            llm_output = f"[MENU_SELECTED:{intent_data['menu']}]"
+        else:
+            llm_output = post_process_select_intent(llm_output, user_message_for_llm)
+
+        print(f"🤖 FINAL: {llm_output}\n")
 
         # 4) LLM 응답에 MENU_SELECTED → 위치 선택 메시지
         location_select_reply = process_menu_selection(
@@ -1156,6 +1158,9 @@ async def send_message(
         }
 
     except Exception as e:
+        print(f"💥 오류: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500, detail=f"LLM 처리 중 오류: {e}"
         )
