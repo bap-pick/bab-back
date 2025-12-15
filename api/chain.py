@@ -254,53 +254,52 @@ def get_food_reason(food_name: str) -> str:
 def get_foods_by_condition(
     condition: str,
     oheng_list: List[str],
-    exclude_foods: List[str] = None
+    exclude_foods: List[str] = None,
+    target_count: int = 3
 ) -> List[str]:
     """
     Args:
         condition: "국물", "면", "매운" 등
         oheng_list: 추천해야 할 오행 리스트
         exclude_foods: 제외할 음식 리스트
+        target_count: 목표 추천 음식 개수
     """
-    exclude_foods = exclude_foods or []
+    exclude_foods = set(exclude_foods or []) # 제외 목록도 set으로 변환
     
-    # 1. 조건에 맞는 음식 가져오기
-    condition_foods = set(FOOD_TAGS.get(condition, []))
+    # 1. 조건에 맞는 음식 가져오기 (전체 후보군)
+    condition_foods_set = set(FOOD_TAGS.get(condition, []))
     
     # 2. 오행에 맞는 음식 가져오기
-    oheng_foods = set()
+    oheng_foods_set = set()
     for oheng in oheng_list:
-        oheng_foods.update(OHAENG_FOOD_LISTS.get(oheng, []))
+        oheng_foods_set.update(OHAENG_FOOD_LISTS.get(oheng, []))
     
-    # 3. 교집합 (조건 + 오행 둘 다 만족)
-    matched_foods_by_intersection = condition_foods & oheng_foods
+    # 3. 1순위: 교집합 (조건 + 오행 둘 다 만족)
+    # 이미 제외 목록에 있는 음식은 미리 제거
+    matched_foods_by_intersection = (condition_foods_set & oheng_foods_set) - exclude_foods
     
-    # 4. 결과 리스트 초기화
-    result_list = list(matched_foods_by_intersection)
+    # 4. 결과 리스트 초기화 (1순위 음식 추가)
+    result_set = set(matched_foods_by_intersection)
     
-    # 5. 추천할 음식이 3개 미만일 경우, '조건만 만족하는 음식'으로 채우기
-    if len(result_list) < 3:
+    # 5. 2순위: 조건만 만족하는 음식으로 채우기
+    if len(result_set) < target_count:
         
-        # '조건만 만족'하지만 '오행 조건은 충족하지 못함' 또는 '오행 정보가 없음' 음식
-        supplementary_foods = condition_foods - matched_foods_by_intersection
-        
-        # 제외 목록에 없는 음식만 필터링
-        supplements_to_add = [
-            f for f in supplementary_foods 
-            if f not in result_list and f not in exclude_foods
-        ]
+        # '조건만 만족'하는 전체 음식 중에서 이미 선택된 음식과 제외 목록을 뺀 나머지
+        # (condition_foods_set - oheng_foods_set)은 오행을 만족하지 않는 음식만 추출
+        supplementary_foods = condition_foods_set - result_set - exclude_foods
         
         # 무작위로 섞어서 추가할 음식을 고르게 선택
-        random.shuffle(supplements_to_add)
+        supplements_list = list(supplementary_foods)
+        random.shuffle(supplements_list)
         
-        # 필요한 개수만큼 추가 (총 3개가 되도록)
-        needed_count = 3 - len(result_list)
-        result_list.extend(supplements_to_add[:needed_count])
+        # 필요한 개수만큼 추가
+        needed_count = target_count - len(result_set)
+        
+        # set에 추가하여 고유성 보장
+        result_set.update(supplements_list[:needed_count])
     
-    # 6. 최종 제외 목록 제거
-    result = [f for f in result_list if f not in exclude_foods]
-    
-    return result
+    # 최종 결과를 리스트로 변환하여 반환
+    return list(result_set)
 
 # 메시지에서 언급된 음식 추출 
 def extract_mentioned_foods_from_message(message_content: str) -> List[str]:
