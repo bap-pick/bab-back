@@ -12,11 +12,67 @@ from core.models import ChatMessage, Restaurant
 from core.geo import calculate_distance
 from vectordb.vectordb_util import get_embeddings, get_chroma_client, COLLECTION_NAME_RESTAURANTS
 
+from api.saju import _get_oheng_analysis_data
+from saju.message_generator import define_oheng_messages
+
 client = genai.Client(api_key=GEMMA_API_KEY)
 model_name = "gemma-3-4b-it"
 
 embeddings = get_embeddings()
 chroma_client = get_chroma_client()
+
+# chain.py에서 OHENG_INFO_MESSAGE 상수를 제거하고 함수 추가
+
+async def generate_oheng_explanation(uid: str, db: Session) -> str:
+    """
+    사용자의 오행 상태를 기반으로 맞춤 설명 메시지 생성
+    """
+    # 오행 정보 가져오기
+    lacking_oheng, strong_oheng_db, oheng_type, oheng_scores = (
+        await _get_oheng_analysis_data(uid, db)
+    )
+    _, _, _, control_ohengs, strong_ohengs = define_oheng_messages(
+        lacking_oheng, strong_oheng_db, oheng_type, oheng_scores
+    )
+    
+    # 오행별 음식 예시
+    oheng_food_examples = {
+        "목(木)": "샐러드, 쌈밥, 육회비빔밥 같은 신선하고 가벼운 음식",
+        "화(火)": "떡볶이, 김치찌개, 짬뽕 같은 매콤하고 자극적인 음식",
+        "토(土)": "김밥, 카레라이스, 된장찌개 같은 탄수화물 중심의 든든한 음식",
+        "금(金)": "후라이드치킨, 두부조림, 계란찜 같은 담백하고 깔끔하거나 바삭한 음식",
+        "수(水)": "초밥, 물회, 해물탕 같은 시원하고 촉촉한 음식"
+    }
+    
+    message = "오행을 기준으로 음식을 추천하고 있어!\n\n"
+    
+    # 오행 기본 설명
+    message += "오행이란 세상을 다섯 가지 에너지로 나눠서 이해하는 개념이야. "
+    message += "우리의 몸도 화(火), 수(水), 목(木), 금(金), 토(土) 다섯 가지 기운으로 이루어져 있어서, 이 기운들의 밸런스를 맞춰주면 좋아.\n\n"
+        
+    # 부족한 오행
+    if lacking_oheng:        
+        # 각 부족한 오행별 음식 예시
+        for oheng in lacking_oheng:
+            food_example = oheng_food_examples.get(oheng, "관련 음식")
+            message += f"오늘은 부족한 {', '.join(lacking_oheng)} 기운을 {food_example}을 통해 채우면 좋아."
+        message += "\n"
+    
+    # 강한 오행 + 조절 오행
+    if strong_ohengs and control_ohengs:
+        strong_str = ', '.join(strong_ohengs)
+        control_str = ', '.join(control_ohengs)
+
+        # 상극 관계 설명
+        for control in control_ohengs:
+            food_example = oheng_food_examples.get(control, "관련 음식")
+            message += f"넘치는 {strong_str} 기운은 {control_str} 기운의 음식({food_example})으로 눌러줄 수 있어!\n"
+        message += "\n"
+    
+    message += "하지만 오행은 재미있는 가이드일 뿐이야. "
+    message += "언제든 다른 메뉴도 찾아줄 수 있어!🍀"
+    
+    return message
 
 # ===============================
 #  음식 데이터 정의
@@ -362,11 +418,10 @@ def build_conversation_history(db: Session, chatroom_id: int) -> str:
 
     conversation_history = ""
     for msg in recent_messages:
-        # 숨겨진 초기메세지 llm에게 공개 x
-        if msg.message_type == "hidden_initial":
+        # 숨겨진 메시지 타입들은 LLM에게 전달 안 함
+        if msg.message_type in ["hidden_initial", "oheng_info", "location_select"]:
             continue
         
-        # 역할 명시 (user/assistant 구분)
         if msg.role == "user":
             prefix = "사용자:"
         elif msg.role == "assistant":
@@ -508,7 +563,7 @@ def generate_recommendation_prompt(
 5. 반말 사용, 친근하게
 
 응답 형식:
-"오늘은 [메뉴1], [메뉴2], [메뉴3] 어때? 이 중에서 골라봐!"
+"오늘은 [메뉴1], [메뉴2], [메뉴3] 어때? 아니면 다른 메뉴 추천해줄까?"
 
 지금 바로 추천해:"""
 
@@ -535,7 +590,7 @@ def generate_condition_prompt_improved(
         return f"""사용자가 '{condition}' 음식을 원하는데, 조건에 맞는 음식이 없어.
 
 이렇게 답변해:
-"'{condition}' 조건에 딱 맞는 음식은 없지만, 대신 [대체메뉴1], [대체메뉴2], [대체메뉴3] 어때?"
+"'{condition}' 조건에 딱 맞는 음식은 없지만, 대신 [대체메뉴1], [대체메뉴2], [대체메뉴3] 어때? 아니면 다른 메뉴 추천해줄까?"
 
 반말로 짧게 답변:"""
     
@@ -558,7 +613,7 @@ def generate_condition_prompt_improved(
 4. 반말 사용
 
 응답 형식:
-"{condition} 음식으로 [메뉴1], [메뉴2], [메뉴3] 어때?"
+"{condition} 음식으로 [메뉴1], [메뉴2], [메뉴3] 어때? 아니면 다른 메뉴 추천해줄까?"
 
 지금 바로 추천:"""
 
@@ -593,7 +648,7 @@ def generate_reason_prompt_short(
         else:
             role = f"{food_oheng} 기운 제공"
     
-    return f"""'{menu_name}' 추천 이유를 **정확히 3문장**으로 설명해.
+    return f"""'{menu_name}' 추천 이유를 간결하게 설명해.
 
 🎯 음식 정보:
 • 오행: {food_oheng}
@@ -605,7 +660,7 @@ def generate_reason_prompt_short(
 • 강함: {', '.join(strong_oheng)}
 
 📋 응답 형식 (정확히 이대로):
-"{menu_name}은(는) {food_oheng} 기운 음식이야. {food_reason}. 너는 [{role}가] 필요해서 추천했어."
+"{menu_name}은(는) {food_oheng} 기운 음식이야. {food_reason}. 너는 [{role}이] 필요해서 추천했어."
 
 ⚠️ 필수:
 - 반말만 사용
