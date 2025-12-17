@@ -452,7 +452,7 @@ def detect_user_intent_improved(
     msg = user_message.lower().strip()
     
     # 1. 긍정 응답
-    positive_patterns = ["응", "ㅇㅇ", "ㅇ", "그래", "좋아", "ok", "okay", "네", "예", "ㅎㅇ", "ㄱㄱ"]
+    positive_patterns = ["응", "ㅇㅇ", "ㅇ", "그래", "좋아", "ok", "okay", "네", "예", "ㅎㅇ", "ㄱㄱ", "오케이"]
     if msg in positive_patterns:
         if current_recommended_foods:
             return UserIntent.WANT_RECOMMENDATION, {}
