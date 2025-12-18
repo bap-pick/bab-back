@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Response
+from fastapi import APIRouter, HTTPException, Depends, Response, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import datetime
@@ -131,6 +131,7 @@ def login(
 async def guest_login(
     response: Response,
     data: GuestLoginRequest,
+    background_tasks: BackgroundTasks,
     uid: str = Depends(verify_firebase_token),
     db: Session = Depends(get_db)
 ):
@@ -167,13 +168,13 @@ async def guest_login(
         )
         
         db.add(user)
-        db.flush() 
+        db.commit()
+        db.refresh(user) 
 
         # 사주 계산 로직 수행
         try:
             await calculate_saju_and_save(user=user, db=db)
         except Exception as e:
-            db.rollback()
             print(f"Guest Saju calculation failed: {e}")
             raise HTTPException(status_code=500, detail="게스트 정보 저장 실패")
 
